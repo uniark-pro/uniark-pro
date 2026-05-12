@@ -1,132 +1,176 @@
 """
-Three-segment divergence detection module
-(S1 + S2 + S3, with hierarchical recursive extension).
-====================================================
+Three-segment divergence detection module (S1 + S2 + S3, with hierarchical
+recursive extension)
+====================================================================
 
-This is the single canonical implementation of the trading framework's core
-"three-segment structure / co-directional force comparison / divergence
-identification" logic. All upper-layer applications (plot_kline.py /
-app.py / main.py and any future extensions) must import this module.
+This is the single implementation of "three-segment structure /
+same-direction momentum comparison / divergence judgment" within the
+trading-system skeleton. All upper-layer applications (plot_single.py /
+plot_3day.py / app.py / main.py and future extensions) should import
+this module.
 
-Axiomatic principles
---------------------
-1. Slice the MACD histogram (hist) series into consecutive segments by
-   the sign of each bar (positive vs. negative).
-2. Segments shorter than `min_bars` bars are treated as "noise" and
-   merged into adjacent opposite-direction segments; adjacent
-   same-direction segments are then coalesced. With min_bars=0 this
-   step is a no-op.
-3. On the merged segment sequence, scan with a "co-directional /
-   opposite / co-directional" three-segment window for divergence.
+Axiomatic points
+----------------
+1. Slice the MACD histogram (hist) into consecutive segments based on
+   sign (positive vs. negative).
+2. Segments shorter than `min_bars` are treated as "noise" and merged
+   into the adjacent opposite segment; adjacent same-sign segments are
+   then coalesced. When min_bars=0 this step is a no-op.
+3. On the merged segment sequence, scan three-segment windows of the
+   form "same / opposite / same" to detect divergences.
 
 Hierarchical extension
 ----------------------
-Base structure: P₁ = S1 + S2 + S3. Treat P₁ as a composite segment:
-  - P₁.sign  = S1.sign (= S3.sign)
-  - P₁.area  = S1.area + S3.area      (S2 is opposite-direction; excluded)
-  - P₁.span  from S1.start to S3.end
+The base structure P_1 = S1 + S2 + S3. Treat P_1 as a composite segment:
+  - P_1.sign  = S1.sign (which equals S3.sign)
+  - P_1.area  = S1.area + S3.area      (S2 is opposite, not counted)
+  - P_1.span  spans from S1.start to S3.end
 
-On a longer sequence we can construct P₁ + S4 + S5
-(where S4 is opposite, S5 is co-directional), and apply the same
-three-segment divergence test → Level-2 divergence.
-By induction: P₂ = P₁+S4+S5 can extend to P₂+S6+S7 → Level 3, and so on.
+In longer sequences one can construct P_1 + S4 + S5 (where S4 is
+opposite and S5 is same-direction), and apply the three-segment
+divergence test again -> Level-2 divergence.
+By induction: P_2 = P_1+S4+S5 extends to P_2+S6+S7 -> Level 3.
 
-A k-th-level structure consists of 2k+1 raw segments: k co-directional
-+ k opposite (k-1 internal + the rightmost one being opposite). More
-precisely: k co-directional segments alternating with (k-1) opposite
-segments, plus the final co-directional segment → 2k+1 segments
-total. When testing "P + S(2k) + S(2k+1)" as a base three-segment
-candidate, P is composed of the first 2k-1 segments.
+A Level-k structure occupies 2k+1 raw segments: k same-direction
+segments alternating with (k-1) opposite segments, plus the trailing
+same-direction segment -> 2k+1 segments total. When applying the
+base three-segment test to "P + S(2k) + S(2k+1)", P is built from
+the first 2k-1 segments.
 
-Trigger conditions (identical to the base level):
-  a. (rightmost co-directional segment).area / P_k.area  <  ratio_threshold
-  b. Bullish: rightmost segment's low < min(lows of all P-internal
-     co-directional segments)
-     Bearish: rightmost segment's high > max(highs of all P-internal
-     co-directional segments)
+Trigger conditions (identical across all levels):
+  a. (rightmost same-direction segment).area / P_k.area < ratio_threshold
+  b. bullish: rightmost same-direction segment low <
+       min(lows of all same-direction segments inside P)
+     bearish: rightmost same-direction segment high >
+       max(highs of all same-direction segments inside P)
 
 Opposite-barrier rule
 ---------------------
-A triggered opposite-direction divergence "destroys" any same-direction
-high-level structure that crosses its trigger point. Formally:
-  A divergence D is rejected iff there exists a surviving
-  opposite divergence D' satisfying
-    (a) D'.s3_end ∈ (D.s1_start, D.s3_end) (D's trigger point
-        falls strictly within D's open span), and
-    (b) D''s highest level at the same terminal position
-        (kind, s3_start, s3_end) > 1.
+The axiom
+~~~~~~~~~
+"When does a structure start" is easier to define than "when does a
+structure end":
 
-Intuition: s3_end is the "trigger point" of a divergence (the moment
-the reversal takes effect). Once that moment lies inside the
-co-directional structure you are trying to build, the two ends of the
-structure belong to two different mechanisms — one before and one
-after the trend switch — and must not be merged into a single P.
+  **A triggered opposite divergence = the starting point of the next
+  same-direction structure.**
 
-Semantics of (b): two adjacent same-level L1 reversed divergences
-(e.g. an S1+S2+S3 bullish-L1 immediately followed by an S2+S3+S4
-bearish-L1) are geometrically symmetric with "L1 shielded by L≥2":
-the former's trigger point also lies strictly within the latter's
-open span. But L1+L1 is the canonical "twin-reversal" signal of a
-market turn (downside force decay → bounce → bounce force decay →
-re-reversal), and both should be kept. The only formal feature that
-distinguishes the two cases is level: L≥2 is a trend-level signal
-entitled to "veto" any co-directional structure crossing its
-trigger point; L1 divergences are peers and never shield each other.
+A same-direction structure D, during its formation from "start point ->
+its own trigger point", is invalid if it spans across another
+already-triggered opposite divergence D' — it would incorrectly merge
+"pre-reversal" and "post-reversal" motion into the same P.
 
-The "highest level at the same terminal position" is consistent with
-_dedupe_same_terminal: during structural extension a terminal may
-trigger both L1 and L≥n simultaneously, and dedupe treats them as the
-strongest representation of the same divergence; barrier judgment
-likewise uses the highest level to determine barrier strength, keeping
-the two semantics aligned.
+Under this axiomatic framework, there is no such thing as "a structure
+being terminated by another structure". A same-direction motion either
+keeps extending (in which case it is nothing yet), or triggers its own
+divergence (becoming a completed D that then undergoes barrier
+judgment). "When does extension end" is not a question for this layer.
 
-This is a recursive definition: D' may itself be rejected by a
-deeper-nested opposite divergence, in which case D' is no longer a
-valid barrier. Processing in ascending order of s3_end (earliest
-trigger decided first), one linear pass converges.
+Formalization
+~~~~~~~~~~~~~
+D is rejected iff there exists a surviving opposite D' satisfying:
+  (a) D'.s3_end lies strictly within D's open interval
+      (s1_start, s3_end)
+      -- the executable form of "D crosses D's trigger point during
+         its formation".
+  (b) D' achieves a highest level > 1 at the same terminal position
+      (kind, s3_start, s3_end)
+      -- application-layer signal filtering, see below.
+
+Condition (a) is the direct encoding of the axiom:
+  - Anchor s3_end: the moment the opposite reversal is triggered;
+    the natural definition of the next structure's starting point.
+  - Open interval: when D'.s3_end == D.s1_start, D starts exactly
+    after D' and does not cross it; when D'.s3_end == D.s3_end, both
+    trigger simultaneously and geometrically there is no crossing.
+  - Whole interval: D's formation spans from s1_start to s3_end,
+    and any opposite trigger anywhere within counts as "crossing".
+
+Condition (b): application-layer filtering on top of the axiom
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The axiom itself does not distinguish the level of D'. But in practice:
+  - L1 opposite divergences are weak; they only produce a
+    consolidation, not a true trend switch.
+  - L1+L1 twin reversals (e.g. an S1+S2+S3 bullish-L1 immediately
+    followed by an S2+S3+S4 bearish-L1) are the canonical "double
+    reversal" pattern at market turns; geometrically each necessarily
+    crosses the other's open interval. If the axiom applied
+    unconditionally, the two would shield each other -- yet they
+    should both be retained.
+
+So condition (b) requires the barrier to be trend-level (L>=2): an L1
+opposite trigger is not strong enough to invalidate a same-direction
+structure crossing it. This is not a correction to the axiom; it is a
+signal-filtering layer built on top of it.
+
+Why "highest level at the same terminal position"
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+During structure extension the same terminal position
+(kind, s3_start, s3_end) may simultaneously trigger L1 and L>=n.
+Downstream _dedupe_same_terminal treats these as different
+representations of the same divergence and keeps the one with the
+highest level. Barrier judgment is consistent with this: the
+"highest level reached at that position" decides barrier eligibility,
+not the level of any specific record. That way, even if the
+high-level candidate itself is shielded by another barrier, an L1
+candidate surviving at the same position still wields barrier
+strength according to that highest level; conversely, a pure L1 (no
+higher-level candidate at the same position) still does not
+constitute a barrier.
+
+Resolution order
+~~~~~~~~~~~~~~~~
+D' may itself be rejected by an even more interior opposite
+divergence, in which case D' is no longer an effective barrier.
+Process candidates in ascending order of s3_end (earlier triggers
+settle first): any D' capable of shielding D must satisfy
+D'.s3_end < D.s3_end, so when an early-trigger candidate is being
+processed, all possible interior barriers are already settled.
+A single linear scan converges.
+
+L1 is subject to barrier judgment (as the shielded party)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+L1 does not act as a barrier, but as the shielded party it still
+participates in filtering. The single opposite segment S2 of an L1
+can serve as the S_last of some L>=2 opposite divergence, whose
+trigger point s3_end is exactly the end of L1's S2, which lies
+strictly within L1's open interval (S1.start, S3.end). By the axiom,
+L1's S1 and S3 belong to two different mechanisms (one before and
+one after the trend switch) and should be shielded.
 
 Note: condition (a) is strictly stronger than "opposite span fully
-contained" — if D'.span ⊆ D.span, then D'.s3_end necessarily lies in
-(D.s1_start, D.s3_end]. When D' starts before D (the two overlap but
-neither contains the other), condition (a) still captures it
-correctly, which is exactly the first-fix scenario.
+contained" -- if D'.span ⊆ D.span, then D'.s3_end necessarily lies
+in (D.s1_start, D.s3_end]. When D' starts before D (the two overlap
+but neither contains the other), condition (a) still captures it
+correctly.
 
-L1 as the shielded party still participates: L1's single
-opposite-direction S2 segment can itself serve as the S_last of
-some L≥2 opposite divergence, whose trigger point s3_end equals
-L1.S2.end and falls strictly within L1's open interval
-(S1.start, S3.end). In that case L1's S1 and S3 belong to two
-different mechanisms — one before and one after the trend switch
-— and the rule shields L1 accordingly.
-
-Public API (still a single function):
+Public interface (still a single function):
     find_three_segment_divergences(hist, low, high,
                                    min_bars=0,
                                    ratio_threshold=0.5,
                                    max_level=1,
                                    block_by_opposite=True)
 
-Parameter `max_level`:
-    1 (default)  Detect base three-segment only (fully backward-
+Parameter max_level:
+    1 (default)  Detect only base three-segment (fully backward
                  compatible with historical behavior).
-    2, 3, ...    Also detect higher-level extensions.
-    None         Exhaust all possible levels (until segments are
-                 insufficient).
+    2, 3, ...    Also detect extended levels.
+    None         Exhaust all possible levels (until not enough
+                 segments remain).
 
-Parameter `block_by_opposite`:
-    True (default)  Apply the opposite-barrier rule (the user's
-                    preferred semantics).
-    False           Skip filtering; return all raw candidates (for
-                    debugging / reproducing legacy behavior).
+Parameter block_by_opposite:
+    True  (default)  Apply the opposite-barrier rule
+                     (user-preferred semantics).
+    False            Skip filtering; return all raw candidates
+                     (for debugging / reproducing legacy behavior).
 
-Each returned record has a 'level' field indicating the level at
-which the divergence was triggered (1 = base).
+Each returned record carries a new 'level' field indicating at which
+level it was triggered (1 = base).
 """
 import numpy as np
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Internal: raw segmentation
+# Internal utility: raw segmentation
 # ─────────────────────────────────────────────────────────────────────────────
 def find_hist_segments(hist_series):
     """
@@ -134,7 +178,7 @@ def find_hist_segments(hist_series):
     Returns list[dict], each dict:
         { 'sign': 'pos'|'neg', 'start': int, 'end': int,
           'area': float, 'bars': int }
-    where start / end are inclusive integer indices.
+    where start / end are closed-interval indices.
     """
     values = hist_series.values
     n = len(values)
@@ -165,16 +209,16 @@ def find_hist_segments(hist_series):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Internal: noise merging (no-op when min_bars=0)
+# Internal utility: noise merging (no-op when min_bars=0)
 # ─────────────────────────────────────────────────────────────────────────────
 def _merge_short_segments(segs, noise_sign, host_sign, min_bars):
     """
-    Merge any noise_sign segment shorter than min_bars into the adjacent
-    host_sign segment. Prefer merging into the left neighbor; fall back
-    to the right if the left is unavailable. After merging, adjacent
-    same-sign segments are automatically coalesced. Repeat until stable.
-
-    When min_bars<=0, `bars < min_bars` is never true → returns a deep copy.
+    Merge segments of noise_sign shorter than min_bars into the adjacent
+    host_sign segment. Prefer merging to the left; if the left is
+    unavailable, merge to the right; after merging, adjacent same-sign
+    segments are automatically coalesced. Repeat until stable.
+    When min_bars<=0, `bars < min_bars` is never satisfied -> returns a
+    deep copy immediately.
     """
     result = [dict(s) for s in segs]
     changed = True
@@ -220,23 +264,22 @@ def _merge_short_segments(segs, noise_sign, host_sign, min_bars):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Internal: hierarchical scan
+# Internal utility: hierarchical scanning
 # ─────────────────────────────────────────────────────────────────────────────
 def _scan_levels(segs, p_sign, low_series, high_series,
                  ratio_threshold, max_level, kind, min_bars):
     """
-    Scan levels 1..max_level for divergences on `segs` (a strictly
-    sign-alternating sequence).
+    Scan levels 1..max_level on segs (an alternating-sign sequence).
 
-    A k-th-level structure occupies 2k+1 segments:
-      - Co-directional segments at offsets 0, 2, 4, ..., 2k-2 (k total)
-      - Opposite-direction segments at offsets 1, 3, ..., 2k-1 (k total)
-      - The final co-directional segment at offset 2k
+    A level-k structure spans 2k+1 segments:
+      - Same-direction segments at offsets 0, 2, 4, ..., 2k-2 (k of them)
+      - Opposite segments at offsets 1, 3, ..., 2k-1 (k of them)
+      - The trailing same-direction segment at offset 2k
         (i.e. S_{2k+1} = "S5/S7/...", denoted S_last below)
 
-    k=1: classic S1 + S2 + S3
-    k=2: P₁(S1,S2,S3) + S4 + S5
-    k=3: P₂(S1..S5) + S6 + S7
+    k=1: classical S1 + S2 + S3
+    k=2: P_1(S1,S2,S3) + S4 + S5
+    k=3: P_2(S1..S5) + S6 + S7
     """
     results = []
     if not segs:
@@ -250,7 +293,8 @@ def _scan_levels(segs, p_sign, low_series, high_series,
             break
 
         for i in range(len(segs) - window + 1):
-            # Check that segs[i:i+window] is strictly sign-alternating.
+            # Check `window` segments starting at segs[i]; strict
+            # alternation is required.
             block = segs[i:i + window]
             if block[0]['sign'] != p_sign:
                 continue
@@ -263,18 +307,18 @@ def _scan_levels(segs, p_sign, low_series, high_series,
                     ok = False
                     break
             if not ok:
-                # After the merge step, adjacent same-sign segments
-                # cannot occur. We still verify explicitly as a safeguard.
+                # After merging, adjacent same-sign segments cannot
+                # appear; this explicit check is a safety net.
                 continue
 
             same_sign_segs = [block[2 * j] for j in range(k)]   # 0,2,...,2k-2
-            S_mid_last     = block[2 * k - 1]                   # second-to-last (opposite)
-            S_last         = block[2 * k]                       # last (co-directional)
+            S_mid_last     = block[2 * k - 1]                   # second-to-last segment (opposite)
+            S_last         = block[2 * k]                       # last segment (same-direction)
 
-            # min_bars filtering applies only to Level 1 (base three-segment).
-            # Higher-level P is composite, so its bar count is naturally
-            # large; the internal opposite segments are already guaranteed
-            # not to be too short by the merge step above.
+            # min_bars filter applies only at level 1 (base three-segment);
+            # at higher levels P is a composite segment so bars are
+            # necessarily large, and the intermediate opposite segments
+            # are already guaranteed non-short by the merging step.
             if k == 1 and min(
                 same_sign_segs[0]['bars'], S_mid_last['bars'], S_last['bars']
             ) < min_bars:
@@ -288,7 +332,7 @@ def _scan_levels(segs, p_sign, low_series, high_series,
             if ratio >= ratio_threshold:
                 continue
 
-            # New-low / new-high test
+            # New low / new high test
             if kind == 'bullish':
                 p_low      = min(low_series.iloc[s['start']:s['end'] + 1].min()
                                  for s in same_sign_segs)
@@ -302,20 +346,20 @@ def _scan_levels(segs, p_sign, low_series, high_series,
                 if s_last_high <= p_high:
                     continue
 
-            # Composite P's span / total bar count (includes internal
+            # Composite P's span / total bars (including intermediate
             # opposite segments)
             P_start = block[0]['start']
-            P_end   = block[2 * k - 2]['end']   # tail of the third-from-last segment
+            P_end   = block[2 * k - 2]['end']   # tail of the third-from-last is P's tail
             P_bars  = sum(block[j]['bars'] for j in range(0, 2 * k - 1))
 
             results.append({
                 'kind':     kind,
                 'level':    k,
-                # s1_*: P's span (at level=1, identical to S1)
+                # s1_* : P's span (at level=1 this equals S1)
                 's1_start': P_start,
                 's1_end':   P_end,
-                # s3_*: the final co-directional segment
-                # (at level=1: S3; at level=2: S5)
+                # s3_* : last same-direction segment
+                # (at level=1 this is S3; at level=2 this is S5)
                 's3_start': S_last['start'],
                 's3_end':   S_last['end'],
                 's1_area':  P_area,
@@ -330,80 +374,92 @@ def _scan_levels(segs, p_sign, low_series, high_series,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Internal: opposite-barrier filtering
+# Internal utility: opposite-barrier filtering
 # ─────────────────────────────────────────────────────────────────────────────
 def _filter_by_opposite_barriers(divs):
     """
-    Apply the opposite-barrier rule: a divergence D is rejected iff
-    there exists a surviving opposite divergence D' satisfying
-    (a) D'.s3_end ∈ (D.s1_start, D.s3_end) (trigger point lies strictly
-    in D's open span), and (b) D''s highest level at the same terminal
-    position (kind, s3_start, s3_end) > 1 (the barrier must be a
-    trend-level L≥2 divergence, or share a terminal with an L≥2
-    candidate).
+    Apply the opposite-barrier rule (the module-level docstring section
+    "Opposite-barrier rule" is the axiomatic description; this function
+    is its executable form).
 
-    Implementation: process candidates in ascending order of s3_end. Any
-    opposite D' that can shield D must satisfy D'.s3_end < D.s3_end
-    (it triggered earlier), so by the time we process the earlier-
-    triggering candidate, all possible inner barriers are already
-    determined. One linear pass suffices.
+    Axiom: a triggered opposite divergence = the starting point of the
+    next same-direction structure. A same-direction D, if it crosses
+    another already-triggered opposite D' during its formation, is
+    rejected.
 
-    L1 as the shielded party still participates
-    -------------------------------------------
-    An earlier version let level<2 candidates survive unconditionally,
-    on the grounds that "a 3-segment r-g-r or g-r-g block has only 1
-    opposite-color segment in its open interval, which cannot host an
-    opposite divergence". That reasoning conflates "opposite
-    divergence" with "the trigger point of an opposite divergence".
-    L1's single opposite S2 segment can itself serve as the S_last of
-    some L≥2 opposite divergence, and its endpoint is precisely
-    that divergence's trigger point s3_end, falling strictly within
-    L1's open interval (S1.start, S3.end). This is exactly the case
-    the barrier rule is meant to catch: L1's two ends S1 and S3
-    belong to two different mechanisms — one before and one after the
-    trend switch — and must not be merged into a single P.
+    Formalization: D is rejected iff there exists an opposite D' such
+    that
+      (a) D'.s3_end ∈ (D.s1_start, D.s3_end)
+          (D crosses D's trigger point during formation)
+      (b) D' reaches a highest level > 1 at the same terminal position
+          (kind, s3_start, s3_end)
+          (application-layer filter: an L1 opposite is not strong
+          enough to invalidate a same-direction structure crossing it)
 
-    L1 does not act as the barrier
-    ------------------------------
-    Two adjacent same-level L1 reversed divergences (e.g. an S1+S2+S3
-    bullish-L1 immediately followed by an S2+S3+S4 bearish-L1) are the
-    canonical "twin-reversal" signal of a market turn and both should
-    be kept. This configuration is geometrically symmetric with
-    "L1 shielded by L≥2" — the only formal feature distinguishing them
-    is level. Condition (b) therefore restricts the barrier to L≥2
-    divergences.
+    Implementation: process candidates in ascending order of s3_end.
+    Any opposite D' capable of shielding D must satisfy D'.s3_end <
+    D.s3_end (it triggers earlier), so when processing an early-trigger
+    candidate, all possible interior barriers are already settled.
+    A single linear scan suffices.
 
-    Barrier strength is judged by the "highest level at the terminal"
-    -----------------------------------------------------------------
-    During structural extension, the same terminal position
-    (kind, s3_start, s3_end) may simultaneously trigger both L1 and L≥n
-    divergences. The downstream _dedupe_same_terminal treats these
+    L1 still participates in filtering (as the shielded party)
+    -----------------------------------------------------------
+    Earlier versions unconditionally let level<2 candidates survive,
+    on the reasoning that "a 3-segment r-g-r or g-r-g window's open
+    interval contains only 1 opposite-color segment, which is too few
+    to host an opposite divergence." That reasoning conflated
+    "opposite divergence" with "the trigger point of an opposite
+    divergence". The single opposite segment S2 of an L1 can perfectly
+    serve as the S_last of some L>=2 opposite divergence; that
+    divergence's trigger point s3_end is exactly the end of L1's S2,
+    which lies strictly within L1's open interval (S1.start, S3.end).
+    This is precisely the case the barrier rule is meant to catch:
+    L1's S1 and S3 belong to two different mechanisms (one before and
+    one after the trend switch) and must not be merged into a single P.
+
+    L1 does NOT act as a barrier (rationale for condition b)
+    --------------------------------------------------------
+    Two adjacent same-level L1 opposite divergences (e.g. an S1+S2+S3
+    bullish-L1 immediately followed by an S2+S3+S4 bearish-L1) form a
+    canonical twin-reversal signal of a market turn and both should be
+    retained. This geometric configuration is fully symmetric with
+    "L1 shielded by L>=2" -- the only formal feature distinguishing the
+    two is level. So condition (b) requires the barrier to be at least
+    L>=2. This is not a correction to the axiom but a signal-filtering
+    layer on top of it.
+
+    Barrier strength judged by "highest level at the same terminal"
+    --------------------------------------------------------------
+    During structure extension, the same terminal position
+    (kind, s3_start, s3_end) may simultaneously trigger L1 and L>=n
+    divergences. Downstream _dedupe_same_terminal treats these
     candidates as different representations of the same divergence and
-    keeps only the highest-level record. Barrier judgment here follows
-    the same principle: barrier strength is determined by "the highest
-    level reached at this position among the raw candidates", not by
-    the level of any specific record. So even if the higher-level
-    candidate is itself shielded by another barrier, the L1 candidate
-    surviving at the same terminal still acts as a barrier at the full
-    (highest) strength; conversely, a pure L1 (no higher-level
-    candidate at the same terminal) still does not constitute a
-    barrier.
+    flags only the one with the highest level. This function's barrier
+    judgment is consistent with that: barrier eligibility is decided
+    by "the highest level reached at that position in the raw
+    candidate pool", not by the level of any specific record. That way,
+    even if the high-level candidate is shielded by another barrier,
+    the L1 candidate surviving at the same position still exercises
+    barrier strength at the highest level; conversely, a pure L1 (no
+    higher-level candidate at the same position) still does not
+    constitute a barrier.
     """
     if not divs:
         return divs
 
-    # Pre-compute the highest level reached at each (kind, s3_start, s3_end)
-    # terminal position among the raw candidates. Barrier strength is judged
-    # from this map, consistent with _dedupe_same_terminal's semantics:
-    # multi-level candidates at the same terminal are treated as different
-    # representations of the same divergence, judged by the strongest one.
+    # Pre-compute, for each (kind, s3_start, s3_end) terminal position,
+    # the highest level reached among the raw candidates. Barrier
+    # strength is decided from this map, consistent with
+    # _dedupe_same_terminal's semantics — multi-level candidates at the
+    # same position are treated as different representations of the
+    # same divergence, judged by the strongest one.
     max_level_at = {}
     for d in divs:
         key = (d['kind'], d['s3_start'], d['s3_end'])
         if d['level'] > max_level_at.get(key, 0):
             max_level_at[key] = d['level']
 
-    # Sort by trigger point (s3_end) ascending; for ties, by level
+    # Sort by trigger point (s3_end) ascending; tie-break by level
     # ascending (only for stable ordering)
     sorted_divs = sorted(
         divs,
@@ -415,12 +471,11 @@ def _filter_by_opposite_barriers(divs):
         blocked = False
         for s in survivors:
             if s['kind'] == d['kind']:
-                continue   # Same direction — does not constitute a barrier
+                continue   # same direction does not constitute a barrier
             s_key = (s['kind'], s['s3_start'], s['s3_end'])
             if max_level_at.get(s_key, 0) <= 1:
-                continue   # Highest level at this terminal is not > 1
-                           # → does not constitute a barrier
-            # Does s's trigger point lie strictly inside d's open span?
+                continue   # barrier's highest level at the same terminal is not >1, so it does not constitute a barrier
+            # Does s's trigger point fall strictly inside d's open span?
             if d['s1_start'] < s['s3_end'] < d['s3_end']:
                 blocked = True
                 break
@@ -432,44 +487,41 @@ def _filter_by_opposite_barriers(divs):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Internal: terminal-segment dedupe
-# (trend divergence takes precedence over base three-segment)
+# Internal utility: terminal deduplication (trend divergence > three-seg divergence)
 # ─────────────────────────────────────────────────────────────────────────────
 def _dedupe_same_terminal(divs):
     """
-    For records of the same kind that share the same terminal-segment
-    position, keep only the highest level.
+    Keep only the highest level at the same (kind, terminal) position.
 
-    Background: on a single S_last, divergences of multiple levels can
-    co-trigger. For instance, when L2 triggers, the last 3 segments can
-    also constitute an L1 candidate (S1=L2.S3, S3=L2.S5); and because
-    L2's price condition S5.low < min(S1.low, S3.low) is strictly
-    stronger than that L1's S5.low < S3.low, the terminal-L1's price
-    condition is automatically satisfied. But the area-ratio condition
-    S_last/S3 < 0.5 is independent — it does not imply, nor is it
-    implied by, L2's S_last/(S1+S3) < 0.5 — the previous co-directional
-    segment may be either large or small. So whether the terminal L1
-    holds independently must be tested separately via S_last/S3.
+    Background: the same S_last may simultaneously trigger divergences
+    at multiple levels — e.g. when L2 fires, the trailing 3 segments
+    can also form an L1 candidate (S1=L2.S3, S3=L2.S5). Since L2's
+    price condition S5.low < min(S1.low, S3.low) is strictly stronger
+    than that L1's S5.low < S3.low, the terminal L1's price condition
+    is automatically satisfied. But the area ratio S_last/S3 < 0.5 is
+    an independent condition that does not follow from L2's
+    S_last/(S1+S3) < 0.5 — the prior segment can be small or large —
+    so whether the terminal L1 holds independently must be checked via
+    S_last/S3 alone.
 
-    Semantically, trend divergence (L≥2) outranks three-segment
-    divergence (L=1), and visually we should not stack two percentages
-    on the same K-line. So for the same kind and same (s3_start,
-    s3_end), we keep only the record of highest level.
+    Semantically a trend divergence (L>=2) takes precedence over a
+    three-segment divergence (L=1); visually we should not stack two
+    percentages on the same K-line. So for the same kind and the same
+    (s3_start, s3_end), we keep only the record with the largest level.
 
-    `same_terminal_l1` mark
-    -----------------------
-    If the merged-out records include an L1 (meaning the terminal L1
-    also holds independently — S_last/(prev co-directional segment)
-    is also <0.5), the surviving record is annotated with
-    same_terminal_l1=True. The UI uses this field to draw a "double
-    triangle", indicating "force decay holds simultaneously at
-    multiple scales — a stronger signal". If L≥2 triggers but the
-    terminal L1 does not (the previous segment is too small,
-    S_last/prev > 0.5), then same_terminal_l1=False and a single
-    triangle is drawn.
+    The same_terminal_l1 flag
+    -------------------------
+    If the merged-away records include an L1 record (meaning the
+    terminal L1 also holds independently — i.e. S_last / prior segment
+    is also <0.5), the surviving record carries same_terminal_l1=True.
+    The UI uses this field to render a double triangle, meaning
+    "momentum exhaustion holds simultaneously at multiple scales — a
+    stronger signal". If L>=2 fires but the terminal L1 does not hold
+    (the prior segment is too small, so S_last / prior >0.5), then
+    same_terminal_l1=False and the UI renders a single triangle.
     """
     by_key = {}
-    has_l1 = {}        # key -> bool, whether this key has any L1 record
+    has_l1 = {}        # key -> bool, whether any L1 record appeared at this key
     for d in divs:
         key = (d['kind'], d['s3_start'], d['s3_end'])
         if d['level'] == 1:
@@ -480,85 +532,77 @@ def _dedupe_same_terminal(divs):
     out = []
     for key, d in by_key.items():
         d = dict(d)   # avoid mutating the input
-        # An L1 itself does not count as "L1 also present" — this mark
-        # is for the surviving L≥2 records.
+        # L1 itself does not count as "L1 also present" — this flag is
+        # for L>=2 records that were retained while absorbing an L1
         d['same_terminal_l1'] = bool(has_l1.get(key, False)) and d['level'] >= 2
         out.append(d)
     return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Public main API
+# Public main function
 # ─────────────────────────────────────────────────────────────────────────────
 def find_three_segment_divergences(hist_series, low_series, high_series,
                                    min_bars=0, ratio_threshold=0.5,
                                    max_level=1, block_by_opposite=True):
     """
-    Detect three-segment divergence structures on the MACD histogram
+    Detect three-segment divergence structures on a MACD histogram
     (with hierarchical extension and opposite-barrier filtering).
 
     Parameters
     ----------
-    hist_series       : pd.Series   MACD histogram (positive=green, negative=red)
-    low_series        : pd.Series   K-line lows
-    high_series       : pd.Series   K-line highs
-    min_bars          : int         Minimum bar count per segment
-                                    (0 = no merging, no filtering)
-    ratio_threshold   : float       Area-ratio threshold (default 0.5)
+    hist_series       : pd.Series   MACD histogram (positive green, negative red)
+    low_series        : pd.Series   K-line low prices
+    high_series       : pd.Series   K-line high prices
+    min_bars          : int         Minimum bars per segment (0 = no merge, no filter)
+    ratio_threshold   : float       Area-ratio threshold, default 0.5
     max_level         : int|None    Hierarchical extension depth.
-                                    1    = base three-segment only
-                                           (default, backward-compatible)
-                                    2    = also detect P+S4+S5
-                                    None = exhaustive
+                                    1 = only base three-segment (default, backward compatible)
+                                    2 = also detect P+S4+S5
+                                    None = exhaust
     block_by_opposite : bool        Whether to apply the opposite-barrier
-                                    rule (default True). A divergence that
-                                    crosses a surviving opposite divergence
-                                    D' is rejected when D''s highest level
-                                    at its terminal position is ≥2 (a pure
-                                    L1 reversed divergence does not act as
-                                    a barrier). Set to False to obtain
-                                    unfiltered raw candidates.
+                                    rule (default True). A divergence is
+                                    rejected if it spans an opposite D'
+                                    that reaches a highest level >=2 at
+                                    the same terminal position (a pure
+                                    L1 opposite does not constitute a
+                                    barrier). Set False to obtain the
+                                    full unfiltered candidate set.
 
     Returns
     -------
-    list[dict], sorted ascending by (s3_start, level). Each record:
+    list[dict], sorted by (s3_start, level) ascending. Each record's fields:
         kind     : 'bullish' | 'bearish'
-        level    : Trigger level (1 = base, 2 = P+S4+S5, etc.)
-        s1_start : Index where the left-side body begins
-                   (at level=1, identical to S1.start)
-        s1_end   : Index where the left-side body ends
-        s3_start : Index where the right-side latest co-directional
-                   segment begins
-        s3_end   : Index where the right-side latest co-directional
-                   segment ends
-        s1_area  : Left-side body area (sum of co-directional members)
-        s3_area  : Right-side latest co-directional segment's area
-        s1_bars  : Left-side body span (total bars including internal
-                   opposite segments)
-        s2_bars  : Bar count of the opposite segment immediately before
-                   the last co-directional segment
-        s3_bars  : Bar count of the right-side latest co-directional
-                   segment
+        level    : Triggering level (1 = base three-segment, 2 = P+S4+S5, etc.)
+        s1_start : Start index of the left-side body (at level=1 this is S1.start)
+        s1_end   : End index of the left-side body
+        s3_start : Start index of the rightmost same-direction segment
+        s3_end   : End index of the rightmost same-direction segment
+        s1_area  : Area of the left-side body (sum of same-direction member areas)
+        s3_area  : Area of the rightmost same-direction segment
+        s1_bars  : Span of the left-side body in bars (including intermediate opposite segments)
+        s2_bars  : Bars in the opposite segment immediately preceding S_last
+        s3_bars  : Bars in the rightmost same-direction segment
         ratio    : s3_area / s1_area
-        provisional : bool. True = S_last's right end equals the data's
-                     last index, meaning that segment may still extend
-                     (a future K-line of the same sign would extend it;
-                     only a sign-flip "closes" it). The current ratio
-                     and price extreme are a snapshot, not a verdict.
-                     The UI uses this flag to switch colors (warning
-                     the user). False = a sign-flip has already
-                     occurred after S_last; S_last is settled and the
-                     signal is final.
-        same_terminal_l1 : bool. Only level≥2 records can be True.
-                     Semantics: "at this same terminal position, L1
-                     also holds independently" — i.e.
-                     S_last/(previous co-directional segment) < 0.5
-                     (this ratio is independent from the L≥2 ratio
-                     S_last/(cumulative previous co-directional area)).
-                     Indicates that force decay holds at multiple
-                     scales simultaneously — a stronger signal. The
-                     UI draws a double triangle when True. Records of
-                     level=1 are always False.
+        provisional : bool. True = S_last's right end equals the last
+                     index of the data, meaning this segment may still
+                     extend (future bars with the same sign will append;
+                     only a sign flip "closes" it). The current ratio
+                     and price-new-extremum are thus a snapshot, not a
+                     verdict. The UI uses this field to switch colors
+                     and warn the user. False = a sign flip has
+                     occurred afterward, S_last is finalized, the
+                     signal is confirmed.
+        same_terminal_l1 : bool. Only records with level>=2 may be True.
+                     Semantics: "the terminal position also supports an
+                     independent L1" — i.e. S_last / immediately-prior
+                     same-direction segment < 0.5 (note this ratio is
+                     independent of the L>=2 ratio S_last /
+                     sum-of-all-prior-same-direction-segments). Indicates
+                     momentum exhaustion holds at multiple scales
+                     simultaneously — a stronger signal. The UI uses
+                     this field to render a double triangle. Records
+                     with level=1 are always False.
     """
     raw_segs = find_hist_segments(hist_series)
     out = []
@@ -575,12 +619,12 @@ def find_three_segment_divergences(hist_series, low_series, high_series,
                             ratio_threshold, max_level,
                             kind='bearish', min_bars=min_bars))
 
-    # Mark "incomplete / provisional":
-    # if S_last's right end equals the last index of hist, the segment
-    # may still extend (future K-lines of the same sign would extend it;
-    # only a sign-flip closes it). The current ratio is a snapshot, not
-    # a verdict. The UI uses this flag to switch colors (dodger blue +
-    # "?" suffix) to warn the user.
+    # Mark "unfinished / provisional":
+    # When S_last's right end equals the last index of the hist series,
+    # this segment may still extend (future bars with the same sign
+    # will append; only a sign flip "closes" it). The current ratio is
+    # just a snapshot, not a verdict. The UI uses this field to switch
+    # colors (bright yellow + "?" suffix) to warn the user.
     last_index = len(hist_series) - 1
     for d in out:
         d['provisional'] = (d['s3_end'] == last_index)
@@ -589,15 +633,15 @@ def find_three_segment_divergences(hist_series, low_series, high_series,
     if block_by_opposite:
         out = _filter_by_opposite_barriers(out)
 
-    # Terminal-segment dedupe: for same kind and same (s3_start,
-    # s3_end), keep only the record of highest level. Trend divergence
-    # (L≥2) takes precedence over three-segment divergence (L=1). We
-    # dedupe AFTER barrier filtering — so that when L≥2 is rejected by
-    # a barrier, the L1 at the same position can still be retained.
-    # If during dedupe we find an L1 also held independently at the
-    # same position, mark same_terminal_l1=True on the surviving
-    # record; the UI uses this to draw a double triangle (force decay
-    # at multiple scales).
+    # Terminal deduplication: for the same kind and (s3_start, s3_end),
+    # keep only the highest level. A trend divergence (L>=2) takes
+    # precedence over a three-segment divergence (L=1). Deduplication
+    # runs AFTER barrier filtering — this way, if an L>=2 candidate is
+    # rejected by a barrier, the L1 at the same position can still
+    # survive. During deduplication, if an L1 also holds independently
+    # at the same position, the retained record is flagged with
+    # same_terminal_l1=True, and the UI renders a double triangle
+    # (momentum exhaustion at multiple scales simultaneously).
     out = _dedupe_same_terminal(out)
 
     out.sort(key=lambda d: (d['s3_start'], d['level']))
