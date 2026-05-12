@@ -90,8 +90,6 @@ SYMBOL_CONFIG_BY_MARKET = {
         '3690.HK': {'short': '3690', 'cn_name': '美团'},
         '1810.HK': {'short': '1810', 'cn_name': '小米'},
         '0388.HK': {'short': '0388', 'cn_name': '港交所'},
-        # 用户加的标的（按上市先后）
-        '0100.HK': {'short': '0100', 'cn_name': 'MiniMax'},     # 2026-01-09 上市
     },
 }
 
