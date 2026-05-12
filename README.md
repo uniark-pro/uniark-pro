@@ -230,7 +230,7 @@ hk_stock  → data_yfinance → data_akshare
 [MIT 许可证](LICENSE),沿用基础版。你可以自由使用、修改、分发、
 商用,需附带署名,不附带担保。
 
-基础版作者:f0133833。本 fork 的修改部分:<你的新用户名>。
+基础版作者:f0133833。本 fork 的修改部分:uniark-pro。
 
 ---
 
