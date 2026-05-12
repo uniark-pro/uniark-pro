@@ -249,10 +249,6 @@
       {
         "ticker": "0388.HK",
         "cn_name": "港交所"
-      },
-      {
-        "ticker": "0100.HK",
-        "cn_name": "minimax"
       }
     ],
     "ranges": {
