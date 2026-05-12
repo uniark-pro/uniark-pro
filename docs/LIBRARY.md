@@ -141,7 +141,7 @@ all_cands = find_three_segment_divergences(
 
 ## Documentation
 
-- **Full usage tutorial**: see [`divergence_tutorial_en.md`](divergence_tutorial_en.md) for input contracts, parameter tuning rationale, visualization recipes, and 5 common pitfalls.
+- **Full usage tutorial**: see [`TUTORIAL.md`](TUTORIAL.md) for input contracts, parameter tuning rationale, visualization recipes, and 5 common pitfalls.
 - **Algorithm specification**: read the module-level docstring in `divergence.py` itself — it's the authoritative reference for the axiomatic structure, hierarchical extension semantics, and the opposite-barrier rule.
 
 ---

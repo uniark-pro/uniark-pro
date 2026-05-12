@@ -105,11 +105,16 @@ one whose `hist` column you passed to the detector. If you detected on
 `df['hist']` but later try to interpret with `df.iloc[100:]['hist']`,
 every index will be off by 100.
 
-### 2.3 NaN values are tolerated
+### 2.3 NaN handling
 
-The function handles NaN robustly — it skips them without breaking
-segmentation. Still, dropping them first is recommended. MACD is NaN for
-roughly the first 26 bars anyway, so there's no reason to keep them:
+The function tolerates NaN, with one caveat: **NaN terminates the current
+segment** — if a same-sign run of `hist` values has a NaN in the middle,
+the two halves are cut into two segments rather than treated as one. In
+the warmup period (the first ~26 bars where MACD isn't stable) this isn't
+an issue because the whole stretch is NaN; but scattered NaNs in the middle
+of valid data will fragment your segments.
+
+The safest pattern is to dropna before calling:
 
 ```python
 df = df.dropna(subset=['hist']).reset_index(drop=False)
@@ -393,10 +398,13 @@ need higher `min_bars`:
 
 ### 6.4 `block_by_opposite`
 
-In practice **always keep this True**. Setting it to `False` drops a core
-semantic filter — namely "once an opposite Lv≥2 fires, any same-direction
-structure spanning the trigger point belongs to two different regimes
-and shouldn't be merged."
+In practice **always keep this True**. Setting it to `False` bypasses the
+core semantic filter: under the axiom "**a triggered opposite divergence
+marks the starting point of the next same-direction structure**", a new
+structure is invalidated if its formation spans an already-triggered
+opposite divergence (the application layer additionally requires the
+barrier to be at least L≥2, so that adjacent L1+L1 reversal signals don't
+mutually cancel).
 
 Legitimate uses of `False`:
 - Debugging the algorithm itself
