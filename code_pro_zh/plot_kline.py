@@ -36,6 +36,7 @@ CLI 输出（供 main.py 解析）：
 """
 import sys
 import os
+import json
 import datetime as _dt
 import matplotlib
 matplotlib.use('Agg')
@@ -171,6 +172,10 @@ INTERVAL_CONFIG = {
 MA_PERIODS = (7, 25, 99)
 MA_COLORS  = ('#ff9900', '#cc44ff', '#00aaff')
 
+# 锁定锚点高亮色:把 MA99 在锚点 S_last 时间窗内的子段染成红色,跟 MA99 原本
+# 的浅蓝 (#00aaff) 形成强对比,一眼能看出"这段时间是大周期上锚定的极值段"。
+ANCHOR_HIGHLIGHT_COLOR = '#e63946'
+
 TOO_MUCH_DATA_THRESHOLD = 600
 LOOKBACK_BARS = 200
 
@@ -235,8 +240,25 @@ def _make_title(market, sym_cfg, iv_cfg, start_date, end_date, source=None):
     return f"{head}\n{start_date} ~ {end_date}"
 
 
-def render_chart(market, symbol, interval, start_str=None, end_str=None):
-    """渲染指定 market、币种、周期、时间段的 K 线 + MACD + 背离标注图。"""
+def render_chart(market, symbol, interval, start_str=None, end_str=None,
+                 locked_anchor=None):
+    """渲染指定 market、币种、周期、时间段的 K 线 + MACD + 背离标注图。
+
+    locked_anchor : dict | None
+        锁定锚点的信息包,在主面板上把对应时间段的 MA99 染成红色。结构:
+            {
+                's3_start_iso': str,   # 大周期 S_last 起始时间(必填)
+                's3_end_iso':   str,   # 大周期 S_last 结束时间(必填)
+                'peak_iso':     str,   # 大周期极值时间(可选,仅用于显示)
+                'kind':         str,   # 'bullish'|'bearish' (可选)
+            }
+
+        视觉:主面板 K 线上方的 MA99 折线,在 s3_start ~ s3_end 时间窗内变红——
+        MA99 原本浅蓝 (#00aaff),染色子段红色 (#e63946),对比强烈,一眼看出
+        "这段时间就是大周期上锁定的极值段"。
+
+        缺 s3 时间窗 / 时间窗超出当前数据范围:静默跳过染色,不阻断绘图。
+    """
     if interval not in INTERVAL_CONFIG:
         raise ValueError(
             f"Unknown interval: {interval!r}. "
@@ -337,6 +359,46 @@ def render_chart(market, symbol, interval, start_str=None, end_str=None):
     if macd_ax is not None:
         annotate_divergences(macd_ax, df, divergences)
 
+    # ── 锁定锚点:主面板 MA99 染色 ─────────────────────────────────────
+    # 把 locked_anchor 里的 s3_start_iso ~ s3_end_iso 时间窗投影到当前周期 df
+    # 上,得到 [lo, hi] 闭区间下标。然后在主面板叠加一条红色 MA99 子线段,
+    # 覆盖该区间——视觉上 MA99 在锚点期间变红。
+    #
+    # 投影规则:df.index.searchsorted 把时间戳转成下标——
+    #   - s3_start 用 side='left'(找到第一根 >= s3_start 的 K 线)
+    #   - s3_end   用 side='right' - 1(找到最后一根 <= s3_end 的 K 线)
+    # 找不到对应区间/区间空/缺 s3 字段 → 静默跳过,锚点是锦上添花。
+    if locked_anchor and len(axes) >= 1 and _has_any_valid('ma99'):
+        try:
+            anchor_dict = (locked_anchor if isinstance(locked_anchor, dict)
+                           else {})
+            s3s_iso = anchor_dict.get('s3_start_iso')
+            s3e_iso = anchor_dict.get('s3_end_iso')
+            if s3s_iso and s3e_iso:
+                s3s_ts = pd.Timestamp(s3s_iso)
+                s3e_ts = pd.Timestamp(s3e_iso)
+                if s3s_ts.tzinfo is not None:
+                    s3s_ts = s3s_ts.tz_localize(None)
+                if s3e_ts.tzinfo is not None:
+                    s3e_ts = s3e_ts.tz_localize(None)
+                lo = int(df.index.searchsorted(s3s_ts, side='left'))
+                hi = int(df.index.searchsorted(s3e_ts, side='right')) - 1
+                # 区间至少 2 根才有意义(画线段)、要落在当前数据范围内
+                if 0 <= lo < hi < len(df):
+                    price_ax = axes[0]
+                    xs = list(range(lo, hi + 1))
+                    ys = df['ma99'].iloc[lo:hi + 1].values
+                    price_ax.plot(
+                        xs, ys,
+                        color=ANCHOR_HIGHLIGHT_COLOR,
+                        linewidth=2.2,
+                        zorder=10,                # 盖在原浅蓝 MA99 (zorder ~2) 上方
+                        solid_capstyle='round',
+                    )
+        except Exception:
+            # 解析失败 / 序列空 / 任何异常都静默
+            pass
+
     return fig, df, divergences
 
 
@@ -352,13 +414,63 @@ def make_output_filename(market, symbol, interval, df):
     return f"{market}_{short_safe}_{iv_cfg['file_prefix']}_{start_date}_{end_date}.png"
 
 
+def serialize_divergences(df, divs):
+    """
+    把 find_three_segment_divergences 的输出转成"UI 可直接消费"的精简
+    dict 列表,只保留下游(main.py / app.py)真正用到的字段,并附上极值
+    时间点 peak_iso——背离钻取的核心锚点——以及 s3 时间窗的两端 ISO 时间
+    (next-level 钻取时,plot_kline 用它来锚定主面板上的 MA99 染色范围)。
+
+    极值定义:
+      bullish → S_last 区间内 low 最小的那根 K 线的 open_time
+      bearish → S_last 区间内 high 最大的那根 K 线的 open_time
+
+    极值是"S_last 内部"的极值,不是整个 P 跨度的极值。背离判定要求
+    S_last 创出比左侧主体更深的新低/更高的新高,所以 S_last 内极值
+    必然是当前可见跨度上的真正极值。
+
+    输出按 s3_end 升序(等同于按时间顺序),恰好就是
+    find_three_segment_divergences 返回时的排序——故此处不再重排。
+    """
+    out = []
+    for d in divs:
+        s3s, s3e = d['s3_start'], d['s3_end']
+        seg_low  = df['low'].iloc[s3s:s3e + 1]
+        seg_high = df['high'].iloc[s3s:s3e + 1]
+        if d['kind'] == 'bullish':
+            peak_pos = int(seg_low.values.argmin())
+            peak_idx = s3s + peak_pos
+            peak_price = float(seg_low.iloc[peak_pos])
+        else:
+            peak_pos = int(seg_high.values.argmax())
+            peak_idx = s3s + peak_pos
+            peak_price = float(seg_high.iloc[peak_pos])
+        peak_ts = df.index[peak_idx]
+        out.append({
+            'kind':        d['kind'],
+            'level':       int(d['level']),
+            'ratio':       float(d['ratio']),
+            'provisional': bool(d.get('provisional', False)),
+            'same_terminal_l1': bool(d.get('same_terminal_l1', False)),
+            # 极值时间(底背离=最低价时间,顶背离=最高价时间)和价格
+            'peak_iso':    peak_ts.isoformat(),
+            'peak_price':  peak_price,
+            # S_last 时间窗两端(用于子周期钻取时在 MA99 上染色)
+            's3_start_iso': df.index[s3s].isoformat(),
+            's3_end_iso':   df.index[s3e].isoformat(),
+        })
+    return out
+
+
 # ── CLI 入口 ────────────────────────────────────────────────────────
 if __name__ == "__main__":
     if len(sys.argv) < 4:
-        print("Usage: python plot_kline.py <market> <symbol> <interval> [start_str] [end_str]")
+        print("Usage: python plot_kline.py <market> <symbol> <interval> [start_str] [end_str] [locked_anchor_json]")
         print("  market:   'crypto' | 'us_stock' | 'cn_stock' | 'hk_stock'")
-        print("  symbol:   crypto 标的（例 BTCUSDT, DOGEUSDT）或 stock 标的（例 MU, NVDA）")
+        print("  symbol:   crypto 标的(例 BTCUSDT, DOGEUSDT)或 stock 标的(例 MU, NVDA)")
         print(f"  interval: {list(INTERVAL_CONFIG.keys())}")
+        print("  locked_anchor_json: 锁定锚点信息包的 JSON 字符串(可选),例如:")
+        print('    \'{"s3_start_iso":"2020-03-10","s3_end_iso":"2020-03-16","peak_iso":"2020-03-12","kind":"bullish"}\'')
         sys.exit(1)
 
     market    = sys.argv[1]
@@ -367,7 +479,18 @@ if __name__ == "__main__":
     start_str = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else None
     end_str   = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else None
 
-    fig, df, divs = render_chart(market, symbol, interval, start_str, end_str)
+    # 锚点参数:JSON 字符串解析为 dict;空串/解析失败都视为无锚点
+    locked_anchor = None
+    if len(sys.argv) > 6 and sys.argv[6]:
+        try:
+            parsed = json.loads(sys.argv[6])
+            if isinstance(parsed, dict):
+                locked_anchor = parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    fig, df, divs = render_chart(market, symbol, interval, start_str, end_str,
+                                 locked_anchor=locked_anchor)
 
     sym_cfg = _resolve_symbol_config(market, symbol)
     iv_cfg  = INTERVAL_CONFIG[interval]
@@ -385,3 +508,6 @@ if __name__ == "__main__":
     print_divergences(df, divs)
     print(f"图片已保存: {out_path}")
     print(f"BARS={len(df)}")
+    # 把背离信号以 JSON 单行形式输出给上层 UI——main.py 用 subprocess 调用
+    # 时通过正则 ^DIVS_JSON=... 解析。一行限定让正则能稳定捕获。
+    print(f"DIVS_JSON={json.dumps(serialize_divergences(df, divs), ensure_ascii=False)}")

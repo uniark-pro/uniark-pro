@@ -1,33 +1,33 @@
 """
-高周期投影到低周期 - 导航逻辑（双 market 版）
-=================================================
+高周期投影到低周期 - 导航逻辑(双 market 版,背离钻取模式)
+=============================================================
 "地图 → 放大镜" 工作流的核心抽象。
 
-工作流：
+工作流:
   1. 用户选 market → 选标的 → 选入口周期 → 选时段 → 看图
-  2. 当前图根据 K 线根数计算应切几段，每段用下一级周期渲染（钻取）
-  3. 重复直到金字塔末端（crypto 是 15m，三个 stock market 都是 1h）
+  2. 当前图上检测到的每条背离 = 一个钻取入口卡片
+  3. 点击某条背离 = 用该背离的极值时间 (peak_iso) 锚定,钻到下一级周期
+     窗口 = peak_iso ± (BEFORE, AFTER) 根次级 K 线时长
+  4. 重复直到金字塔末端(crypto 是 15m,三个 stock market 都是 1h)
 
-段数公式：
-  N_next = 当前根数 × 周期比（当前周期分钟 ÷ 下一级周期分钟）
-  段数   = floor(N_next / BARS_PER_SEGMENT_TARGET) + 1
+钻取窗口公式:
+  fetch_start = peak_iso - BEFORE × next_interval_minutes
+  fetch_end   = peak_iso + AFTER  × next_interval_minutes
+  
+  BEFORE >> AFTER:大头放在 peak 之前,因为我们看的是"什么导致了这次极值",
+  AFTER 留一段是给后续验证/印证用,过小则刚翻号就没了。
 
-直觉：每段下一级 K 线大致恒定在目标根数附近。BARS_PER_SEGMENT_TARGET 是
-软性目标，决定"每张图想容纳多少根 K 线"。385 接近"一年多一点的日线窗口"。
-
-边界：
-  - 段数 ≥ 1（公式天然保证）。即使只切 1 段，UI 也照常显示按钮，
-    点击才进入下一级 —— 保持"看图 → 选段 → 进下一级"的交互一致性。
-  - 当前周期到达金字塔末端时，next_interval 返回 None，UI 不再展示
-    钻取按钮（已到末端提示）。
+为什么不再做"等距切段"(旧设计):
+  等距切段把当前窗口机械地切成 N 段,每段一个按钮——但这些段未必对应
+  有意义的事件,大部分点击都是"碰运气"。背离钻取每个入口都是一个具体
+  的市场结构信号(极值 + 力度衰竭),点击意图明确。
 
 market 差异
 -----------
-crypto 的金字塔覆盖到 15m（币圈 24/7 连续）。
-三个 stock market（美股/A股/港股）共用同一条钻取链 weekly→daily→1h，
-yfinance 1h 原生支持，能往回拿 ~730 天数据，足够覆盖大部分中期趋势的
-启动信号回看。更小级别（30m/15m/5m）受 yfinance 60 天硬墙限制，且
-盘前盘后 + 各市场午休断点让钻取段的语义需要单独设计，留作后续扩展。
+crypto 的金字塔覆盖到 15m(币圈 24/7 连续)。
+三个 stock market(美股/A股/港股)共用同一条钻取链 weekly→daily→1h,
+yfinance 1h 原生支持,能往回拿 ~730 天数据。更小级别(30m/15m/5m)
+受 yfinance 60 天硬墙限制,留作后续扩展。
 """
 import datetime as _dt
 import pandas as pd
@@ -83,10 +83,14 @@ TOP_RANGES = [
 ]
 
 
-# ── 段数计算的核心常量 ───────────────────────────────────────────────
-# 改它就可以全局控制"每段下一级图的目标根数"。
-# 385 ≈ 一年多一点的日线窗口；改到 250 会切得更细，改到 500 段更粗。
-BARS_PER_SEGMENT_TARGET = 385
+# ── 背离钻取的窗口大小 ─────────────────────────────────────────────
+# 钻取到 next_interval 时,从极值时间 peak_iso 向两侧推:
+#   - BEFORE 根:peak 之前,显示"是什么导致了这次极值"
+#   - AFTER  根:peak 之后,印证/确认极值是否成立
+# 总窗口 = BEFORE + 1(peak 本身)+ AFTER = 485 根次级 K 线。
+# BEFORE 远大于 AFTER 因为信号的形成过程更值得回看。
+DIVERGENCE_DRILL_BARS_BEFORE = 354
+DIVERGENCE_DRILL_BARS_AFTER  = 130
 
 
 # ── 主算法 ──────────────────────────────────────────────────────────
@@ -102,54 +106,30 @@ def has_drilldown(interval, market='crypto'):
     return next_interval(interval, market) is not None
 
 
-def interval_ratio(current, nxt):
-    """current 周期 → nxt 周期的根数倍率（例 weekly→3day = 7/3）"""
-    return INTERVAL_MINUTES[current] / INTERVAL_MINUTES[nxt]
-
-
-def compute_segment_count(current_interval, current_bars, market='crypto'):
+def compute_divergence_drill_window(peak_ts, next_iv):
     """
-    给定"当前层 K 线根数"，计算钻到下一级时该把当前时间窗切成几段。
+    给定背离极值时间 + 目标钻取周期,计算钻取窗口的起止时间。
 
-    公式：
-        N_next = current_bars × ratio(current → next)
-        段数   = floor(N_next / BARS_PER_SEGMENT_TARGET) + 1
+    Parameters
+    ----------
+    peak_ts : pd.Timestamp | datetime
+        背离极值时间(底背离 = K 线最低价时间,顶背离 = K 线最高价时间)
+    next_iv : str
+        目标钻取周期,如 'daily' / '4h' / '1h' 等
 
     Returns
     -------
-    int|None
-        段数（≥1），或 None 表示当前周期已是末端，无法下钻。
+    (pd.Timestamp, pd.Timestamp)
+        (window_start, window_end) 钻取窗口
     """
-    nxt = next_interval(current_interval, market)
-    if nxt is None:
-        return None
-    n_next = current_bars * interval_ratio(current_interval, nxt)
-    return int(n_next // BARS_PER_SEGMENT_TARGET) + 1
-
-
-def compute_subranges(start_ts, end_ts, count):
-    """
-    把时间窗 [start_ts, end_ts] 平均切成 count 个子段。
-    返回 list[(sub_start, sub_end)]，每个都是 pd.Timestamp。
-
-    最后一段右端点对齐到 end_ts，避免浮点漂移。
-    """
-    if not isinstance(start_ts, pd.Timestamp):
-        start_ts = pd.Timestamp(start_ts)
-    if not isinstance(end_ts, pd.Timestamp):
-        end_ts = pd.Timestamp(end_ts)
-
-    if count < 1:
-        raise ValueError(f"count must be >= 1, got {count}")
-
-    total = end_ts - start_ts
-    step  = total / count
-    subs  = []
-    for i in range(count):
-        sub_start = start_ts + step * i
-        sub_end   = start_ts + step * (i + 1) if i < count - 1 else end_ts
-        subs.append((sub_start, sub_end))
-    return subs
+    if not isinstance(peak_ts, pd.Timestamp):
+        peak_ts = pd.Timestamp(peak_ts)
+    if next_iv not in INTERVAL_MINUTES:
+        raise ValueError(f"未知 interval: {next_iv!r}")
+    minutes = INTERVAL_MINUTES[next_iv]
+    before = _dt.timedelta(minutes=minutes * DIVERGENCE_DRILL_BARS_BEFORE)
+    after  = _dt.timedelta(minutes=minutes * DIVERGENCE_DRILL_BARS_AFTER)
+    return peak_ts - before, peak_ts + after
 
 
 def format_range_label(start_ts, end_ts, interval):

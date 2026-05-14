@@ -37,19 +37,29 @@ from flask import Flask, render_template_string, request, jsonify
 _DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _DIR)
 
-from plot_kline import render_chart
+from plot_kline import render_chart, serialize_divergences
 from navigation import (NEXT_INTERVAL_BY_MARKET, INTERVAL_MINUTES,
-                        BARS_PER_SEGMENT_TARGET)
+                        DIVERGENCE_DRILL_BARS_BEFORE,
+                        DIVERGENCE_DRILL_BARS_AFTER)
 import settings
 from settings import MARKETS, ENTRY_INTERVALS_BY_MARKET, get_entry_intervals
 
 app = Flask(__name__)
 
 
-def generate_chart(market, symbol, interval, start_str, end_str):
-    """渲染并返回 (b64, actual_start_iso, actual_end_iso, bars_count)"""
-    fig, df, _ = render_chart(market, symbol, interval,
-                              start_str or None, end_str or None)
+def generate_chart(market, symbol, interval, start_str, end_str,
+                   locked_anchor=None):
+    """渲染并返回 (b64, actual_start_iso, actual_end_iso, bars_count, divs)
+
+    divs 是 serialize_divergences 输出的简化 dict 列表,前端用它渲染
+    "背离钻取卡片"。已按 s3_end 升序(时间序)。
+
+    locked_anchor : dict | None
+        锁定锚点信息包,提供则主面板 MA99 在锚点 s3 时间窗内染红。
+    """
+    fig, df, divs = render_chart(market, symbol, interval,
+                                 start_str or None, end_str or None,
+                                 locked_anchor=locked_anchor or None)
     buf = io.BytesIO()
     fig.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.8)
     plt.close(fig)
@@ -58,7 +68,8 @@ def generate_chart(market, symbol, interval, start_str, end_str):
     return (img_b64,
             df.index[0].isoformat(),
             df.index[-1].isoformat(),
-            int(len(df)))
+            int(len(df)),
+            serialize_divergences(df, divs))
 
 
 HTML = r"""
@@ -151,6 +162,9 @@ HTML = r"""
     .grid.subs       { grid-template-columns: 1fr; gap: 6px; }
     .grid.subs.cols2 { grid-template-columns: repeat(2, 1fr); }
     .grid.subs.cols3 { grid-template-columns: repeat(3, 1fr); }
+    .grid.divs       { grid-template-columns: 1fr; gap: 6px; }
+    .grid.divs.cols2 { grid-template-columns: repeat(2, 1fr); }
+    .grid.divs.cols3 { grid-template-columns: repeat(3, 1fr); }
 
     .sub-card { background: #2a2a3e; border: 1px solid #44446a;
                 border-radius: 8px; padding: 10px; text-align: left;
@@ -158,6 +172,21 @@ HTML = r"""
     .sub-card:hover { border-color: #f7a26a; }
     .sub-card-head { font-size: 0.75rem; color: #8888aa; margin-bottom: 2px; }
     .sub-card-body { font-size: 0.92rem; color: #e0e0f0; }
+
+    /* 背离钻取卡片:跟 sub-card 同款圆角,但卡片头颜色按 kind 区分 */
+    .div-card { background: #2a2a3e; border: 1px solid #44446a;
+                border-radius: 8px; padding: 10px; text-align: left;
+                cursor: pointer; transition: all 0.15s; user-select: none; }
+    .div-card:hover { border-color: #f7a26a; }
+    .div-card.locked { border-color: #f7a26a; border-width: 1.5px; }
+    .div-card.locked:hover { border-color: #ffb070; }
+    .div-card-head { font-size: 0.78rem; margin-bottom: 2px; font-weight: 500; }
+    .div-card-head.bullish     { color: #ff5566; }
+    .div-card-head.bearish     { color: #22cc44; }
+    .div-card-head.provisional { color: #1e90ff; }
+    .div-card-head.locked      { color: #f7a26a; }
+    .div-card-body { font-size: 0.92rem; color: #e0e0f0; }
+    .div-empty { color: #8888aa; font-size: 0.85rem; padding: 4px 0; }
 
     #status-1, #status-2, #status-set { text-align: center; font-size: 0.85rem;
                             color: #8888aa; margin: 8px 0; min-height: 1.1em; }
@@ -329,7 +358,8 @@ HTML = r"""
   // NEXT_INTERVAL_BY_MK: { crypto: {weekly:'3day',...}, us_stock: {weekly:'daily', daily:'1h', '1h':null}, ... }
   const NEXT_INTERVAL_BY_MK        = {{ next_interval_by_mk_json | safe }};
   const INTERVAL_MINUTES           = {{ interval_minutes_json | safe }};
-  const BARS_PER_SEGMENT_TARGET    = {{ target_json | safe }};
+  const DIV_DRILL_BARS_BEFORE      = {{ div_drill_bars_before_json | safe }};
+  const DIV_DRILL_BARS_AFTER       = {{ div_drill_bars_after_json | safe }};
   let curLang                      = {{ language_json | safe }};
   let selMarket                    = {{ market_json | safe }};
   // 每个 market 各自的 symbols + ranges_by_iv
@@ -355,12 +385,16 @@ HTML = r"""
       interval:   'INTERVAL',
       timerange:  'TIME RANGE',
       generate:   'Generate Chart',
-      drill_hint: bars => `Drill into ${bars}-bar sub-segments:`,
       reset:      '↺ Start over',
       generating: 'Generating...',
       done:       bars => `Done ✓ (${bars} bars)`,
       error:      'Error ✗',
       end_msg:    '(End of pyramid — no further drill-down)',
+      div_drill:        'Click a divergence to drill into next level:',
+      div_locked_head:  '🔒 Locked anchor — continue drilling',
+      div_none:         '(No divergence detected in current view)',
+      div_bullish:      'Bullish',
+      div_bearish:      'Bearish',
       iv: { '15m':'15m','30m':'30m','1h':'1h','4h':'4h',
             'daily':'Daily','3day':'3-Day','weekly':'Weekly' },
       mk: { 'crypto': 'Crypto',
@@ -402,12 +436,16 @@ HTML = r"""
       interval:   '周期',
       timerange:  '时间段',
       generate:   '生成图表',
-      drill_hint: bars => `点击进入下一级（每段约 ${bars} 根 K 线）：`,
       reset:      '↺ 重新开始',
       generating: '正在生成...',
       done:       bars => `完成 ✓ (${bars} 根)`,
       error:      '错误 ✗',
       end_msg:    '(已到金字塔末端 — 下方无更细周期)',
+      div_drill:        '点击下方背离卡片,钻取到次级别:',
+      div_locked_head:  '🔒 锁定锚点钻取链 — 继续钻取下一级',
+      div_none:         '(当前视图未检测到背离信号)',
+      div_bullish:      '底背离',
+      div_bearish:      '顶背离',
       iv: { '15m':'15分钟','30m':'30分钟','1h':'1小时','4h':'4小时',
             'daily':'日线','3day':'3日线','weekly':'周线' },
       mk: { 'crypto': '虚拟币',
@@ -499,31 +537,30 @@ HTML = r"""
   function curIv()     { return selIntervalByMk[selMarket]; }
   function curRngs()   { return (RANGES_BY_MK_IV[selMarket] || {})[curIv()] || []; }
 
-  // ── 段数算法（按 market 走对应金字塔）─────────────────────────────
-  function intervalRatio(cur, nxt) {
-    return INTERVAL_MINUTES[cur] / INTERVAL_MINUTES[nxt];
-  }
+  // ── 周期映射 + 背离钻取窗口 ─────────────────────────────────────
   function nextIntervalOf(market, iv) {
     const m = NEXT_INTERVAL_BY_MK[market] || {};
     return m[iv] || null;
   }
-  function computeSegmentCount(market, curIvName, curBars) {
-    const nxt = nextIntervalOf(market, curIvName);
-    if (!nxt) return null;
-    const nNext = curBars * intervalRatio(curIvName, nxt);
-    return Math.floor(nNext / BARS_PER_SEGMENT_TARGET) + 1;
+  // 钻取窗口:peak ± (BEFORE, AFTER) 根次级 K 线时长
+  function computeDivDrillWindow(peakIso, nextIv) {
+    const peakMs = new Date(peakIso).getTime();
+    const min = INTERVAL_MINUTES[nextIv];
+    const before = DIV_DRILL_BARS_BEFORE * min * 60 * 1000;
+    const after  = DIV_DRILL_BARS_AFTER  * min * 60 * 1000;
+    return [
+      new Date(peakMs - before).toISOString(),
+      new Date(peakMs + after).toISOString(),
+    ];
   }
-  function computeSubranges(startIso, endIso, count) {
-    const s = new Date(startIso).getTime();
-    const e = new Date(endIso).getTime();
-    const step = (e - s) / count;
-    const subs = [];
-    for (let i = 0; i < count; i++) {
-      const subS = new Date(s + step * i);
-      const subE = new Date(i < count - 1 ? s + step * (i + 1) : e);
-      subs.push([subS.toISOString(), subE.toISOString()]);
-    }
-    return subs;
+  // 从 div(serializeDivergences 输出)抽出锚点信息包
+  function divToAnchor(d) {
+    return {
+      peak_iso:     d.peak_iso,
+      s3_start_iso: d.s3_start_iso || null,
+      s3_end_iso:   d.s3_end_iso   || null,
+      kind:         d.kind || 'bullish',
+    };
   }
 
   function fmtRange(startIso, endIso, interval) {
@@ -654,7 +691,12 @@ HTML = r"""
   }
 
   // ── 视图 2 ────────────────────────────────────────────────────────
-  async function pushAndRender(market, symbol, interval, startIso, endIso) {
+  // pushAndRender 第 6 参数 lockedAnchor (object|null|undefined):
+  //   { peak_iso, s3_start_iso, s3_end_iso, kind }
+  // 提供时表示当前栈帧属于一条"锁定锚点钻取链"——锚点信息整条链上不变,
+  // 子图主面板 MA99 在锚点 s3 时间窗内染红。
+  async function pushAndRender(market, symbol, interval, startIso, endIso,
+                               lockedAnchor) {
     showView('view-chart');
     const status  = document.getElementById('status-2');
     const spinner = document.getElementById('spinner-2');
@@ -675,6 +717,7 @@ HTML = r"""
           market, symbol, interval,
           start: isoToBinanceStr(startIso),
           end:   isoToBinanceStr(endIso),
+          locked_anchor: lockedAnchor || null,
         })
       });
       const data = await resp.json();
@@ -685,6 +728,8 @@ HTML = r"""
         start: data.actual_start,
         end:   data.actual_end,
         bars:  data.bars,
+        divs:  data.divs || [],
+        lockedAnchor: lockedAnchor || null,
       });
 
       img.src = 'data:image/png;base64,' + data.img;
@@ -693,7 +738,7 @@ HTML = r"""
       status.className = 'ok';
 
       buildCrumbs();
-      buildSubGrid();
+      buildDivGrid();
     } catch(e) {
       status.textContent = tx.error + ': ' + (e.message || e);
       status.className = 'err';
@@ -722,46 +767,102 @@ HTML = r"""
     });
   }
 
-  function buildSubGrid() {
+  // 按父级周期颗粒度格式化 peak 时间
+  function fmtPeakLabel(peakIso, parentInterval) {
+    if (!peakIso) return '';
+    const d = new Date(peakIso);
+    const pad = n => String(n).padStart(2, '0');
+    if (['15m','30m','1h','4h'].includes(parentInterval)) {
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  }
+
+  // 背离钻取区:两种模式(非锁定列出所有背离 / 锁定单按钮继续)
+  function buildDivGrid() {
     const top = stack[stack.length - 1];
     const nextIv = nextIntervalOf(top.market, top.interval);
     const section = document.getElementById('sub-section');
     const grid    = document.getElementById('sub-grid');
+    const tx      = i18n[curLang];
 
     if (!nextIv) {
       section.style.display = 'block';
-      document.getElementById('sub-hint').textContent = i18n[curLang].end_msg;
+      document.getElementById('sub-hint').textContent = tx.end_msg;
       grid.innerHTML = '';
       return;
     }
 
-    const segCount = computeSegmentCount(top.market, top.interval, top.bars);
-    const subs = computeSubranges(top.start, top.end, segCount);
-    const estBars = Math.round(top.bars * INTERVAL_MINUTES[top.interval]
-                                       / INTERVAL_MINUTES[nextIv] / segCount);
-
     section.style.display = 'block';
-    document.getElementById('sub-hint').textContent =
-      i18n[curLang].drill_hint(estBars);
+    document.getElementById('sub-hint').textContent = tx.div_drill;
 
-    grid.className = 'grid subs' +
-      (segCount >= 5 ? ' cols3' : (segCount >= 3 ? ' cols2' : ''));
+    // ── 锁定模式:单按钮 ─────────────────────────────────────────
+    if (top.lockedAnchor) {
+      grid.className = 'grid divs';
+      const peakStr = fmtPeakLabel(top.lockedAnchor.peak_iso, top.interval);
+      const el = document.createElement('div');
+      el.className = 'div-card locked';
+      el.innerHTML =
+        `<div class="div-card-head locked">${tx.div_locked_head}</div>` +
+        `<div class="div-card-body">▸ ${ivLabel(nextIv)}    @ ${peakStr}</div>`;
+      el.onclick = () => drillWithAnchor(top.market, top.symbol, nextIv,
+                                          top.lockedAnchor);
+      grid.innerHTML = '';
+      grid.appendChild(el);
+      return;
+    }
+
+    // ── 非锁定模式:列出本图所有背离 ──────────────────────────────
+    const divs = top.divs || [];
+    if (divs.length === 0) {
+      grid.className = 'grid divs';
+      grid.innerHTML = `<div class="div-empty">${tx.div_none}</div>`;
+      return;
+    }
+
+    const n = divs.length;
+    grid.className = 'grid divs' +
+      (n >= 5 ? ' cols3' : (n >= 3 ? ' cols2' : ''));
 
     grid.innerHTML = '';
-    subs.forEach(([s, e], idx) => {
+    divs.forEach((d, idx) => {
+      const isProv = !!d.provisional;
+      const kindText = d.kind === 'bullish' ? tx.div_bullish : tx.div_bearish;
+      const cssKind = isProv ? 'provisional' :
+                      (d.kind === 'bullish' ? 'bullish' : 'bearish');
+      const lvTag = `L${d.level}`;
+      const provSuffix = isProv ? ' ?' : '';
+      const ratioPct = Math.round(d.ratio * 100);
+      const peakStr = fmtPeakLabel(d.peak_iso, top.interval);
+
       const el = document.createElement('div');
-      el.className = 'sub-card';
-      el.innerHTML = `<div class="sub-card-head">${idx+1}/${segCount} · ${ivLabel(nextIv)}</div>`
-                   + `<div class="sub-card-body">${fmtRange(s, e, nextIv)}</div>`;
-      el.onclick = () => pushAndRender(top.market, top.symbol, nextIv, s, e);
+      el.className = 'div-card ' + cssKind;
+      el.innerHTML =
+        `<div class="div-card-head ${cssKind}">` +
+          `${idx+1}/${n} · ${kindText} · ${lvTag}  ${ratioPct}%${provSuffix}` +
+        `</div>` +
+        `<div class="div-card-body">@ ${peakStr}  ▸ ${ivLabel(nextIv)}</div>`;
+      // 点击 = 用 div 的完整锚点(peak_iso + s3 时间窗 + kind)启动锁定链
+      el.onclick = () => drillWithAnchor(top.market, top.symbol, nextIv,
+                                          divToAnchor(d));
       grid.appendChild(el);
     });
+  }
+
+  // 通用钻取入口:启动锁定链 / 沿锁定链继续都走这里
+  function drillWithAnchor(market, symbol, nextIv, anchor) {
+    const [s, e] = computeDivDrillWindow(anchor.peak_iso, nextIv);
+    pushAndRender(market, symbol, nextIv, s, e, anchor);
   }
 
   function popTo(idx) {
     const target = stack[idx];
     stack = stack.slice(0, idx);
-    pushAndRender(target.market, target.symbol, target.interval, target.start, target.end);
+    // 回到 idx 这一帧 = 恢复它的锁定状态。如果 target 自己就在锁定链中,
+    // 恢复后 UI 仍是锁定模式;否则回到"列出所有背离"模式。
+    pushAndRender(target.market, target.symbol, target.interval,
+                  target.start, target.end,
+                  target.lockedAnchor || undefined);
   }
 
   function resetToStart() {
@@ -1109,7 +1210,7 @@ HTML = r"""
     buildIntervalPicker();
     if (stack.length > 0) {
       buildCrumbs();
-      buildSubGrid();
+      buildDivGrid();
     }
     if (curSyms().length === 0) buildSymbolPicker();
     buildRangePicker();
@@ -1156,7 +1257,8 @@ def index():
                                                   for mk in MARKETS}),
         next_interval_by_mk_json    = json.dumps(NEXT_INTERVAL_BY_MARKET),
         interval_minutes_json       = json.dumps(INTERVAL_MINUTES),
-        target_json                 = json.dumps(BARS_PER_SEGMENT_TARGET),
+        div_drill_bars_before_json  = json.dumps(DIVERGENCE_DRILL_BARS_BEFORE),
+        div_drill_bars_after_json   = json.dumps(DIVERGENCE_DRILL_BARS_AFTER),
         language_json               = json.dumps(cur['language']),
         market_json                 = json.dumps(cur['market']),
         symbols_by_mk_json          = json.dumps(symbols_by_mk),
@@ -1180,11 +1282,16 @@ def generate():
     interval = data.get('interval', 'weekly')
     start    = data.get('start')
     end      = data.get('end')
+    # 锚点信息包(可选)。前端 pushAndRender 传 lockedAnchor → 服务端这里收
+    raw_anchor = data.get('locked_anchor')
+    locked_anchor = raw_anchor if isinstance(raw_anchor, dict) else None
+
     if market not in MARKETS:
         return jsonify({'ok': False, 'error': f'invalid market: {market}'})
     try:
-        img_b64, actual_start, actual_end, bars = generate_chart(
-            market, symbol, interval, start, end
+        img_b64, actual_start, actual_end, bars, divs = generate_chart(
+            market, symbol, interval, start, end,
+            locked_anchor=locked_anchor,
         )
         return jsonify({
             'ok': True,
@@ -1192,6 +1299,7 @@ def generate():
             'actual_start': actual_start,
             'actual_end':   actual_end,
             'bars':         bars,
+            'divs':         divs,
         })
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)})

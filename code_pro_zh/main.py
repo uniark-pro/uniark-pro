@@ -1,23 +1,25 @@
 """
-K线分析 - 桌面 UI（导航栈版 + 动态段数 + 设置 + 多 market）
+K线分析 - 桌面 UI(导航栈版 + 背离钻取 + 设置 + 多 market)
 ============================================================
-工作流：
-  1. 选 market（虚拟币/美股/A股/港股）→ 选标的 → 选入口周期 → 选时段 → 点 "Generate Chart"
-  2. subprocess 生成 PNG，系统看图器打开；UI 切到导航视图
-  3. 从 plot_kline.py 的 stdout 解析 BARS=N，按公式
-     段数 = floor(N_next/BARS_PER_SEGMENT_TARGET)+1 算应切几段
-  4. 每段一个按钮（即使 1 段也要点击）；点了进入下一级
-  5. 一路钻到金字塔末端（crypto 是 15m，三个 stock market 都是 1h）
-  6. 点面包屑回到任一上层；点 Reset 回到选择视图
+工作流:
+  1. 选 market(虚拟币/美股/A股/港股)→ 选标的 → 选入口周期 → 选时段 → 点 "Generate Chart"
+  2. subprocess 生成 PNG,系统看图器打开;UI 切到导航视图
+  3. 从 plot_kline.py 的 stdout 解析 BARS=N 和 DIVS_JSON=...(本图检出的所有背离信号)
+  4. 把每条背离做成可点击卡片(底背离红/顶背离绿,带 level 和 ratio)
+  5. 点卡片 = 选定该背离的极值时间作"锁定锚点",钻到下一级周期窗口
+     (peak ± 254/30 根次级 K 线时长);次级别图的主面板 MA99 在锚点 S_last
+     时间窗内染成红色,视觉上把锚点"传"到次级别。
+  6. 锁定后,下一级图变成"单按钮"模式——继续钻取仍使用同一锚点,
+     直到金字塔末端(crypto 15m / stock 1h)或用户面包屑回退。
 
-入口周期（按 market 不同）：
+入口周期(按 market 不同):
   - crypto                          : weekly / 3day / daily
   - us_stock / cn_stock / hk_stock  : weekly / daily
-  其余周期（4h、1h 等）只能通过钻取访问，不在主界面顶级出现。
+  其余周期(4h、1h 等)只能通过钻取访问,不在主界面顶级出现。
 
-设置：
-  顶栏 ⚙ 按钮打开设置对话框，可改语言、当前 market 的标的列表、
-  当前 market 各入口周期的时段列表。改动写入 user_settings.json，
+设置:
+  顶栏 ⚙ 按钮打开设置对话框,可改语言、当前 market 的标的列表、
+  当前 market 各入口周期的时段列表。改动写入 user_settings.json,
   下次启动自动加载。app.py 共享同一份设置。
 """
 import tkinter as tk
@@ -30,9 +32,10 @@ import datetime as _dt
 _DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _DIR)
 
+import json
 from navigation import (next_interval as nav_next_interval,
-                        compute_segment_count, compute_subranges,
-                        INTERVAL_MINUTES, BARS_PER_SEGMENT_TARGET)
+                        compute_divergence_drill_window,
+                        INTERVAL_MINUTES)
 import settings
 from settings import MARKETS, ENTRY_INTERVALS_BY_MARKET, get_entry_intervals
 from settings_dialog_tk import open_settings_dialog
@@ -53,6 +56,13 @@ BTN_HOVER = "#9b8dff"
 BTN2_BG   = "#44446a"
 BTN2_HOVER= "#5a5a7a"
 OK_COLOR  = "#50fa7b"
+
+# 背离卡片配色
+DIV_BULLISH_FG = "#ff5566"   # 底背离卡片头色(红=反转向上)
+DIV_BEARISH_FG = "#22cc44"   # 顶背离卡片头色(绿=反转向下)
+DIV_PROVISIONAL_FG = "#1e90ff"  # 未完成信号
+DIV_BORDER = "#f7a26a"        # 锁定模式卡片边框色(跟 ACCENT2 同源,提示"锚定")
+DIV_TITLE_FG = "#f7a26a"      # 锁定模式标题色
 ERR_COLOR = "#ff5555"
 LANG_BG   = "#2a2a3e"
 LANG_SEL  = "#3a3a5e"
@@ -77,7 +87,7 @@ I18N = {
         'interval':  "▸  Interval",
         'timerange': "▸  Time Range",
         'show':      "Generate Chart",
-        'drill':     "▸  Drill into next-level sub-segments",
+        'drill':     "▸  Click a divergence to drill into next level",
         'reset':     "↺  Start over",
         'generating':"Generating",
         'opens':     "Opening",
@@ -92,6 +102,11 @@ I18N = {
         'iv_daily':  "Daily",'iv_3day':"3-Day", 'iv_weekly':"Weekly",
         'no_symbols':"No symbols configured. Click ⚙ to add one.",
         'no_ranges': "No time ranges configured for this interval. Click ⚙ to add one.",
+        'div_drill': "▸  Click a divergence to drill into next level",
+        'div_locked_head': "🔒  Locked anchor — continue drilling",
+        'div_none':  "(No divergence detected in current view)",
+        'div_bullish': "Bullish",
+        'div_bearish': "Bearish",
     },
     'zh': {
         'title':     "K线",
@@ -100,7 +115,7 @@ I18N = {
         'interval':  "▸  周期",
         'timerange': "▸  时间段",
         'show':      "生成图表",
-        'drill':     "▸  点击进入下一级周期",
+        'drill':     "▸  点击背离卡片钻取到下一级",
         'reset':     "↺  重新开始",
         'generating':"正在生成",
         'opens':     "正在打开",
@@ -115,6 +130,11 @@ I18N = {
         'iv_daily':  "日线", 'iv_3day':"3日线", 'iv_weekly':"周线",
         'no_symbols':"未配置标的，点击 ⚙ 添加。",
         'no_ranges': "该周期未配置时间段，点击 ⚙ 添加。",
+        'div_drill': "▸  点击下方背离卡片,钻取到次级别",
+        'div_locked_head': "🔒  锁定锚点钻取链 — 继续钻取下一级",
+        'div_none':  "(当前视图未检测到背离信号)",
+        'div_bullish': "底背离",
+        'div_bearish': "顶背离",
     }
 }
 
@@ -537,7 +557,21 @@ def build_crumbs():
             sep.pack(side="left", padx=2)
 
 
-def build_subgrid():
+def build_divgrid():
+    """
+    渲染"背离钻取"区,两种模式:
+
+    1. 非锁定模式(栈顶 locked_anchor=None):
+       列出本图所有检出的背离信号,每条一张卡片。点击 = 选定该背离作为
+       "锁定锚点",钻取到次级别周期。
+
+    2. 锁定模式(栈顶 locked_anchor 非空):
+       单按钮"▸ 继续钻取下一级 (<下级周期>) @ <锁定时间>"。点击 = 用同一
+       锚点继续钻往更细的下一级。锚点信息(含 s3_start/s3_end/peak_iso/kind)
+       沿钻取链保持不变,直到面包屑回退到非锁定起点或点 Reset。
+
+    末端周期(无 next_iv)显示"已到末端"提示。
+    """
     for w in sub_holder.winfo_children():
         w.destroy()
     if not nav_stack:
@@ -551,49 +585,153 @@ def build_subgrid():
         tip.pack(anchor="w", pady=4)
         return
 
-    seg_count = compute_segment_count(top['interval'], top['bars'], top['market'])
-    subs = compute_subranges(top['start'], top['end'], seg_count)
+    lbl_drill.configure(text=t('div_drill'))
 
-    est_bars = int(top['bars'] * INTERVAL_MINUTES[top['interval']]
-                                / INTERVAL_MINUTES[next_iv] / seg_count)
-    if lang == 'en':
-        lbl_drill.configure(text=f"▸  Drill into {next_iv} sub-segments (~{est_bars} bars each)")
-    else:
-        lbl_drill.configure(text=f"▸  进入下一级周期（每段约 {est_bars} 根）")
+    # ── 锁定模式分支 ──────────────────────────────────────────────
+    locked_anchor = top.get('locked_anchor')
+    if locked_anchor:
+        _render_locked_card(top, next_iv, locked_anchor)
+        return
 
-    if seg_count >= 5:
-        cols = 3
-    elif seg_count >= 3:
-        cols = 2
-    else:
-        cols = 1
+    # ── 非锁定模式:列出本图所有背离 ───────────────────────────────
+    divs = top.get('divs', [])
+    if not divs:
+        tip = tk.Label(sub_holder, text=t('div_none'),
+                       font=FONT_STATUS, bg=BG, fg=FG_DIM, anchor="w")
+        tip.pack(fill="x", pady=2)
+        return
+
+    # 卡片格子:>=5 张 3 列,>=3 张 2 列,否则单列
+    n = len(divs)
+    cols = 3 if n >= 5 else (2 if n >= 3 else 1)
     for c in range(cols):
         sub_holder.columnconfigure(c, weight=1)
 
-    for i, (s, e) in enumerate(subs):
+    for i, d in enumerate(divs):
         r, c = divmod(i, cols)
+        # 卡片头色按 kind / provisional 决定
+        provisional = d.get('provisional', False)
+        if provisional:
+            head_color = DIV_PROVISIONAL_FG
+        elif d['kind'] == 'bullish':
+            head_color = DIV_BULLISH_FG
+        else:
+            head_color = DIV_BEARISH_FG
+        kind_text  = t('div_bullish') if d['kind'] == 'bullish' else t('div_bearish')
+        lv_tag     = f"L{d['level']}"
+        prov_suffix = " ?" if provisional else ""
+        ratio_pct  = int(round(d['ratio'] * 100))
+        # peak 时间格式跟当前(父级)周期的颗粒度一致
+        peak_str = _fmt_peak_for_interval(d['peak_iso'], top['interval'])
+
         card = tk.Frame(sub_holder, bg=BG_CARD,
                         highlightthickness=1, highlightbackground=BORDER)
         card.grid(row=r, column=c, sticky="nsew", padx=2, pady=2)
 
-        head = tk.Label(card, text=f"{i+1}/{seg_count} · {t('iv_' + next_iv)}",
-                        font=FONT_SUB_S, bg=BG_CARD, fg=FG_DIM, anchor="w")
+        head_text = f"{i+1}/{n} · {kind_text} · {lv_tag}  {ratio_pct}%{prov_suffix}"
+        head = tk.Label(card, text=head_text,
+                        font=FONT_SUB_S, bg=BG_CARD, fg=head_color, anchor="w")
         head.pack(fill="x", padx=10, pady=(6, 0))
-        body = tk.Label(card, text=fmt_range(s, e, next_iv),
+
+        body_text = f"@ {peak_str}  ▸ {t('iv_' + next_iv)}"
+        body = tk.Label(card, text=body_text,
                         font=FONT_SUB, bg=BG_CARD, fg=FG, anchor="w",
                         cursor="hand2")
         body.pack(fill="x", padx=10, pady=(0, 6))
+
+        # 点击 = 用 div 的完整锚点(peak_iso + s3 时间窗 + kind)启动锁定链
         for w in (card, head, body):
             w.bind("<Button-1>",
-                   lambda evt, ss=s, ee=e: render_and_push(top['market'], top['symbol'], next_iv, ss, ee))
+                   lambda evt, dd=d: _drill_with_anchor(
+                       top['market'], top['symbol'], next_iv,
+                       _div_to_anchor(dd),
+                   ))
             w.configure(cursor="hand2")
+
+
+def _render_locked_card(top, next_iv, locked_anchor):
+    """锁定模式下的单按钮渲染。横贯整行,边框橙色提示锚定状态。"""
+    sub_holder.columnconfigure(0, weight=1)
+    peak_str = _fmt_peak_for_interval(locked_anchor.get('peak_iso', ''),
+                                       top['interval'])
+
+    card = tk.Frame(sub_holder, bg=BG_CARD,
+                    highlightthickness=1, highlightbackground=DIV_BORDER)
+    card.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
+
+    head = tk.Label(card, text=t('div_locked_head'),
+                    font=FONT_SUB, bg=BG_CARD, fg=DIV_TITLE_FG, anchor="w")
+    head.pack(fill="x", padx=12, pady=(8, 0))
+
+    body_text = f"▸ {t('iv_' + next_iv)}    @ {peak_str}"
+    body = tk.Label(card, text=body_text,
+                    font=FONT_SUB, bg=BG_CARD, fg=FG, anchor="w",
+                    cursor="hand2")
+    body.pack(fill="x", padx=12, pady=(2, 8))
+
+    # 点击 = 用同一锚点继续钻往更细的下一级
+    for w in (card, head, body):
+        w.bind("<Button-1>",
+               lambda evt: _drill_with_anchor(
+                   top['market'], top['symbol'], next_iv, locked_anchor))
+        w.configure(cursor="hand2")
+
+
+def _div_to_anchor(div):
+    """从 serialize_divergences 输出的 div dict 抽取锚点信息包。"""
+    return {
+        'peak_iso':     div['peak_iso'],
+        's3_start_iso': div.get('s3_start_iso'),
+        's3_end_iso':   div.get('s3_end_iso'),
+        'kind':         div.get('kind', 'bullish'),
+    }
+
+
+def _fmt_peak_for_interval(peak_iso, parent_interval):
+    """按父级周期的颗粒度格式化 peak 时间——小时级带时分,日级及以上只日期。"""
+    if not peak_iso:
+        return ''
+    try:
+        peak_ts = _dt.datetime.fromisoformat(peak_iso)
+    except (ValueError, TypeError):
+        return peak_iso
+    if parent_interval in ('15m', '30m', '1h', '4h'):
+        return peak_ts.strftime('%Y-%m-%d %H:%M')
+    return peak_ts.strftime('%Y-%m-%d')
+
+
+def _drill_with_anchor(market, symbol, next_iv, anchor):
+    """
+    通用钻取入口:启动锁定链 / 沿锁定链继续都走这里。
+
+    anchor: dict (peak_iso, s3_start_iso, s3_end_iso, kind)
+        peak_iso 用于计算钻取窗口(peak ± BEFORE/AFTER 根次级 K 线)
+        s3_start_iso / s3_end_iso 用于在次级别图上 MA99 染色
+        kind 暂保留,未来若按方向区分染色色调时用得上
+
+    一旦传入,就被 render_and_push 存进新栈帧的 locked_anchor 字段。
+    """
+    peak_ts = _dt.datetime.fromisoformat(anchor['peak_iso'])
+    win_start, win_end = compute_divergence_drill_window(peak_ts, next_iv)
+    render_and_push(market, symbol, next_iv, win_start, win_end,
+                    locked_anchor=anchor)
 
 
 _BARS_RE = re.compile(r'^BARS=(\d+)\s*$', re.M)
 _PATH_RE = re.compile(r'^图片已保存:\s*(.+?)\s*$', re.M)
+_DIVS_RE = re.compile(r'^DIVS_JSON=(.+)$', re.M)
 
 
-def render_and_push(market, symbol, interval, start, end):
+def render_and_push(market, symbol, interval, start, end, locked_anchor=None):
+    """渲染窗口并推入导航栈。
+
+    locked_anchor : dict | None
+        锚点信息包(peak_iso + s3_start_iso + s3_end_iso + kind)。提供则:
+          - subprocess 调 plot_kline 时序列化为 JSON 作 CLI 第 6 参数,
+            plot_kline 据此在主面板 MA99 上染色;
+          - 存入栈帧,UI 切换到"锁定单按钮"模式;
+          - 面包屑回退弹栈后,旧栈帧若没有此字段,UI 回到"列出全部背离"模式。
+    """
     show_chart()
     short = _short_for_node(market, symbol)
     status2_var.set(f"{t('generating')}  {short}  "
@@ -603,11 +741,12 @@ def render_and_push(market, symbol, interval, start, end):
     root.update()
 
     script = os.path.join(_DIR, "plot_kline.py")
-    result = subprocess.run(
-        [sys.executable, script, market, symbol, interval,
-         to_binance_str(start), to_binance_str(end)],
-        capture_output=True, text=True
-    )
+    # 锁定锚点透传给 plot_kline 子进程。空 anchor 传空串——plot_kline 按 falsy 跳过。
+    anchor_arg = json.dumps(locked_anchor) if locked_anchor else ''
+    cli_args = [sys.executable, script, market, symbol, interval,
+                to_binance_str(start), to_binance_str(end),
+                anchor_arg]
+    result = subprocess.run(cli_args, capture_output=True, text=True)
     output = (result.stdout + result.stderr).strip()
 
     if result.returncode != 0:
@@ -624,6 +763,16 @@ def render_and_push(market, symbol, interval, start, end):
     bars = int(bars_match.group(1))
     img_path = path_match.group(1) if path_match else None
 
+    # 解析 DIVS_JSON=...(plot_kline.serialize_divergences 的输出)。
+    # 失败不致命——退回到"无背离信号"显示。
+    divs = []
+    divs_match = _DIVS_RE.search(result.stdout)
+    if divs_match:
+        try:
+            divs = json.loads(divs_match.group(1))
+        except Exception:
+            divs = []
+
     nav_stack.append({
         'market':   market,
         'symbol':   symbol,
@@ -631,6 +780,10 @@ def render_and_push(market, symbol, interval, start, end):
         'start':    start,
         'end':      end,
         'bars':     bars,
+        # 背离信号列表(给 build_divgrid 用)
+        'divs':     divs,
+        # 锚点信息包(整条钻取链上保持不变,非锁定起点为 None)
+        'locked_anchor': locked_anchor,
     })
 
     if img_path and os.path.exists(img_path):
@@ -643,14 +796,20 @@ def render_and_push(market, symbol, interval, start, end):
         status2_lbl.configure(fg=OK_COLOR)
 
     build_crumbs()
-    build_subgrid()
+    build_divgrid()
 
 
 def pop_to(idx):
+    """
+    面包屑回弹:回到 idx 这一帧。如果 target 在锁定链中,恢复后 UI 仍是
+    锁定模式;如果是非锁定起点,UI 回到"列出全部背离"模式——用户可以
+    重新选另一条信号。
+    """
     target = nav_stack[idx]
     del nav_stack[:]
     render_and_push(target['market'], target['symbol'], target['interval'],
-                    target['start'], target['end'])
+                    target['start'], target['end'],
+                    locked_anchor=target.get('locked_anchor'))
 
 
 def _open_image(path):
@@ -745,7 +904,7 @@ def apply_lang():
         rebuild_range_picker()
     if nav_stack:
         build_crumbs()
-        build_subgrid()
+        build_divgrid()
 
 
 def switch_lang(new_lang):
