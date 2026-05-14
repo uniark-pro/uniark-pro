@@ -364,9 +364,18 @@ def render_chart(market, symbol, interval, start_str=None, end_str=None,
     # 上,得到 [lo, hi] 闭区间下标。然后在主面板叠加一条红色 MA99 子线段,
     # 覆盖该区间——视觉上 MA99 在锚点期间变红。
     #
-    # 投影规则:df.index.searchsorted 把时间戳转成下标——
-    #   - s3_start 用 side='left'(找到第一根 >= s3_start 的 K 线)
-    #   - s3_end   用 side='right' - 1(找到最后一根 <= s3_end 的 K 线)
+    # 投影规则（关键细节：父级 K 线 open_time 的右边界）:
+    #   s3_start_iso / s3_end_iso 都是父级 K 线的 open_time。一根 K 线"代表"
+    #   的物理时间窗是 [open_time, open_time + 一根 K 线时长)。所以:
+    #     - lo 用 s3_start 直接 searchsorted left  ——父级首根 K 线的起点
+    #     - hi 用 (s3_end + 一根父级 K 线时长) searchsorted left - 1
+    #       ——父级末根 K 线在物理时间上覆盖的最右子 K 线
+    #
+    #   反例:如果 hi 直接用 s3_end searchsorted right - 1,父级末根 K 线在
+    #   子级别上只染了"第一根",举例 weekly 末段在 daily 上染色会少 6 天。
+    #
+    #   父级周期由 locked_anchor['parent_interval'] 提供(必备字段)。缺字段或
+    #   未知周期时退回旧 right-edge 行为,保证向后兼容。
     # 找不到对应区间/区间空/缺 s3 字段 → 静默跳过,锚点是锦上添花。
     if locked_anchor and len(axes) >= 1 and _has_any_valid('ma99'):
         try:
@@ -381,8 +390,15 @@ def render_chart(market, symbol, interval, start_str=None, end_str=None,
                     s3s_ts = s3s_ts.tz_localize(None)
                 if s3e_ts.tzinfo is not None:
                     s3e_ts = s3e_ts.tz_localize(None)
+                # 父级周期 → 一根父 K 线的物理时间。缺字段或未知时退回旧行为。
+                parent_iv = anchor_dict.get('parent_interval')
+                parent_bar_min = INTERVAL_MINUTES.get(parent_iv)
                 lo = int(df.index.searchsorted(s3s_ts, side='left'))
-                hi = int(df.index.searchsorted(s3e_ts, side='right')) - 1
+                if parent_bar_min:
+                    s3e_right_edge = s3e_ts + _dt.timedelta(minutes=parent_bar_min)
+                    hi = int(df.index.searchsorted(s3e_right_edge, side='left')) - 1
+                else:
+                    hi = int(df.index.searchsorted(s3e_ts, side='right')) - 1
                 # 区间至少 2 根才有意义(画线段)、要落在当前数据范围内
                 if 0 <= lo < hi < len(df):
                     price_ax = axes[0]
@@ -429,22 +445,33 @@ def serialize_divergences(df, divs):
     S_last 创出比左侧主体更深的新低/更高的新高,所以 S_last 内极值
     必然是当前可见跨度上的真正极值。
 
+    NaN 处理:
+      用 np.nanargmin / np.nanargmax 而不是 ndarray.argmin。
+      普通 argmin 在含 NaN 数组上会把 NaN 当作 < 任何值返回 NaN 位置,
+      这是潜在 bug——stock 数据偶尔停盘/拆分会留下 NaN low/high。
+      全 NaN 段时 nanargmin 抛 ValueError,该 div 整条跳过(罕见但兜底)。
+
     输出按 s3_end 升序(等同于按时间顺序),恰好就是
     find_three_segment_divergences 返回时的排序——故此处不再重排。
     """
+    import numpy as np
     out = []
     for d in divs:
         s3s, s3e = d['s3_start'], d['s3_end']
         seg_low  = df['low'].iloc[s3s:s3e + 1]
         seg_high = df['high'].iloc[s3s:s3e + 1]
-        if d['kind'] == 'bullish':
-            peak_pos = int(seg_low.values.argmin())
-            peak_idx = s3s + peak_pos
-            peak_price = float(seg_low.iloc[peak_pos])
-        else:
-            peak_pos = int(seg_high.values.argmax())
-            peak_idx = s3s + peak_pos
-            peak_price = float(seg_high.iloc[peak_pos])
+        try:
+            if d['kind'] == 'bullish':
+                peak_pos = int(np.nanargmin(seg_low.values))
+                peak_idx = s3s + peak_pos
+                peak_price = float(seg_low.iloc[peak_pos])
+            else:
+                peak_pos = int(np.nanargmax(seg_high.values))
+                peak_idx = s3s + peak_pos
+                peak_price = float(seg_high.iloc[peak_pos])
+        except ValueError:
+            # S_last 段全 NaN —— 极罕见,该 div 整条跳过(下游不会拿到错误锚点)
+            continue
         peak_ts = df.index[peak_idx]
         out.append({
             'kind':        d['kind'],

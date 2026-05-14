@@ -639,12 +639,12 @@ def build_divgrid():
                         cursor="hand2")
         body.pack(fill="x", padx=10, pady=(0, 6))
 
-        # 点击 = 用 div 的完整锚点(peak_iso + s3 时间窗 + kind)启动锁定链
+        # 点击 = 用 div 的完整锚点(peak_iso + s3 时间窗 + kind + parent_interval)启动锁定链
         for w in (card, head, body):
             w.bind("<Button-1>",
                    lambda evt, dd=d: _drill_with_anchor(
                        top['market'], top['symbol'], next_iv,
-                       _div_to_anchor(dd),
+                       _div_to_anchor(dd, top['interval']),
                    ))
             w.configure(cursor="hand2")
 
@@ -677,13 +677,19 @@ def _render_locked_card(top, next_iv, locked_anchor):
         w.configure(cursor="hand2")
 
 
-def _div_to_anchor(div):
-    """从 serialize_divergences 输出的 div dict 抽取锚点信息包。"""
+def _div_to_anchor(div, parent_interval):
+    """从 serialize_divergences 输出的 div dict 抽取锚点信息包。
+
+    parent_interval 是产出这条 div 的图所在周期。带在 anchor 里一路传给
+    plot_kline 后,MA99 染色时用它把"父级 K 线 open_time"扩成"父级 K 线
+    覆盖的物理时间窗",避免子图末段染色缺一根父级 K 线宽度的问题。
+    """
     return {
         'peak_iso':     div['peak_iso'],
         's3_start_iso': div.get('s3_start_iso'),
         's3_end_iso':   div.get('s3_end_iso'),
         'kind':         div.get('kind', 'bullish'),
+        'parent_interval': parent_interval,
     }
 
 

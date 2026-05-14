@@ -554,12 +554,15 @@ HTML = r"""
     ];
   }
   // 从 div(serializeDivergences 输出)抽出锚点信息包
-  function divToAnchor(d) {
+  // parent_interval 是产出该 div 的图所在周期,带在 anchor 里一路传给后端,
+  // MA99 染色时用它把"父级 K 线 open_time"扩成"父级 K 线覆盖的物理时间窗"。
+  function divToAnchor(d, parentInterval) {
     return {
       peak_iso:     d.peak_iso,
       s3_start_iso: d.s3_start_iso || null,
       s3_end_iso:   d.s3_end_iso   || null,
       kind:         d.kind || 'bullish',
+      parent_interval: parentInterval,
     };
   }
 
@@ -842,9 +845,9 @@ HTML = r"""
           `${idx+1}/${n} · ${kindText} · ${lvTag}  ${ratioPct}%${provSuffix}` +
         `</div>` +
         `<div class="div-card-body">@ ${peakStr}  ▸ ${ivLabel(nextIv)}</div>`;
-      // 点击 = 用 div 的完整锚点(peak_iso + s3 时间窗 + kind)启动锁定链
+      // 点击 = 用 div 的完整锚点(peak_iso + s3 时间窗 + kind + parent_interval)启动锁定链
       el.onclick = () => drillWithAnchor(top.market, top.symbol, nextIv,
-                                          divToAnchor(d));
+                                          divToAnchor(d, top.interval));
       grid.appendChild(el);
     });
   }
