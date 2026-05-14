@@ -86,11 +86,26 @@ TOP_RANGES = [
 # ── 背离钻取的窗口大小 ─────────────────────────────────────────────
 # 钻取到 next_interval 时,从极值时间 peak_iso 向两侧推:
 #   - BEFORE 根:peak 之前,显示"是什么导致了这次极值"
-#   - AFTER  根:peak 之后,印证/确认极值是否成立
-# 总窗口 = BEFORE + 1(peak 本身)+ AFTER = 485 根次级 K 线。
+#   - AFTER  根:peak 之后,印证/确认极值是否成立 + 容纳 S_last 在 peak 之后
+#                的延伸 + 父级一根 K 线在子级别上的物理时长
+# 总窗口 = BEFORE + 1(peak 本身)+ AFTER = 585 根次级 K 线。
 # BEFORE 远大于 AFTER 因为信号的形成过程更值得回看。
+#
+# AFTER 为什么是 230 而不是更小的 130
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# peak_iso 是父级 K 线的 open_time,但 K 线物理覆盖 [open_time, open_time+
+# 一根父级 K 线时长)。同时 S_last 内 peak 之后可能还有几根 K 线没结束。
+# 要让子级别图能完整展示锁定的 S_last 时间段(MA99 红色染色到 s3_end 的
+# 物理右边界),AFTER 必须满足:
+#   AFTER × next_iv_min ≥ (s3_end - peak) + 1 个父级 K 线时长
+#
+# 最坏情况下:daily 父级 + 30m 子级 + peak 在 S_last 中段、s3_end-peak ≈ 1 天:
+#   需求 AFTER ≥ (1天 + 1天) / 30min = 96 根
+# 4h 父级 + 1h 子级 + s3_end-peak ≈ 2 根 4h:
+#   需求 AFTER ≥ (8 + 4) 小时 / 1小时 = 12 根
+# 取 230 给跨多个父周期的极端 case 留充足缓冲,且仍保持 BEFORE >> AFTER。
 DIVERGENCE_DRILL_BARS_BEFORE = 354
-DIVERGENCE_DRILL_BARS_AFTER  = 130
+DIVERGENCE_DRILL_BARS_AFTER  = 230
 
 
 # ── 主算法 ──────────────────────────────────────────────────────────
