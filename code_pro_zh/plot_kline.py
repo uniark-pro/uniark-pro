@@ -24,15 +24,34 @@ CLI 输出（供 main.py 解析）：
 
 数据拉取策略（精确按需）：
   根据请求的 [start_str, end_str] 计算实际拉取窗口：
-      fetch_start = start_str - LOOKBACK_BARS × interval_duration
+      fetch_start = start_str - LOOKBACK_BARS × interval_duration × trading_factor
       fetch_end   = end_str （None 时拉到当下）
   LOOKBACK_BARS=200 让 MA99 在 start_str 处已稳定（99×2+ 缓冲），
   对 MACD 同样足够（5×slow ≈ 130 根即趋同）。
 
-  注意：crypto 周期是物理时间（1 周 = 7×24h），美股周期是交易日时间
-  （1 周 = 5 个交易日，跨周末有断点）。LOOKBACK_BARS 按物理时间往前推
-  在美股下会"多拉一些日历日，得到的实际 K 线根数仍约等于 200"——
-  yfinance 自己只返回交易日 bar，节假日不补，刚好契合需求。
+  关于 trading_factor（交易日因子）：
+  ──────────────────────────────────
+  crypto 24/7 连续，物理时间 1:1 映射到 K 线根数。但 stock market 的盘中
+  粒度（1h / 30m / 15m / 4h）每个交易日只有几个小时有 K 线，单纯按物理时间
+  往前推 LOOKBACK_BARS × interval_duration 会严重低估实际需要的日历跨度。
+
+  以 A 股 1h 为例：
+      交易时间 09:30-11:30 + 13:00-15:00 = 4h/交易日
+      lookback 200 根 1h = 200 个交易小时 = 50 个交易日 ≈ 70 个日历日
+      不加 factor 只往前推 200 小时 = 8.3 个日历日 ≈ 24 根 1h K 线
+      → MA99 在 start_str 之后还要等 75 根 K 线才有值（约 19 个交易日）
+
+  trading_factor = (24 / 交易小时数) × (7 / 5)
+                    │   按日内交易窗口拉伸    │ 按周末补偿日历日
+  各 market 1h 粒度因子：
+      crypto:    1.0   （24/7 连续，不放大）
+      us_stock:  ~5.2  （6.5h/日交易）
+      hk_stock:  ~6.1  （5.5h/日交易）
+      cn_stock:  ~8.4  （4h/日交易，最严重）
+
+  对 daily / weekly 来说 trading_factor=1（不放大）：yfinance / akshare 只
+  返回交易日 bar，节假日不补，按物理时间推 200 天 = ~143 个交易日 ≈ 143 根
+  daily（>99，MA99 仍稳定），刚好契合需求。
 """
 import sys
 import os
@@ -47,7 +66,7 @@ from data import get_klines
 from indicator import add_indicators
 from divergence import find_three_segment_divergences
 from plot_helpers import annotate_divergences, print_divergences
-from navigation import INTERVAL_MINUTES
+from navigation import INTERVAL_MINUTES, compute_lookback_factor
 import mplfinance as mpf
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -205,10 +224,15 @@ def get_macd_colors(hist):
 
 
 def _compute_fetch_start(market, interval, request_start_str):
-    """请求起点向前推 LOOKBACK_BARS 根作为实际拉取起点。"""
+    """请求起点向前推 LOOKBACK_BARS 根作为实际拉取起点。
+
+    对 stock 的盘中粒度（1h 等），按"交易日因子"放大物理跨度，让
+    实际拿到的额外 K 线数仍 ≈ LOOKBACK_BARS。详见 navigation.compute_lookback_factor。
+    """
     request_start = pd.Timestamp(request_start_str)
     minutes = INTERVAL_MINUTES[interval]
-    lookback = _dt.timedelta(minutes=minutes * LOOKBACK_BARS)
+    factor = compute_lookback_factor(market, interval)
+    lookback = _dt.timedelta(minutes=minutes * LOOKBACK_BARS * factor)
     fetch_start = request_start - lookback
     floor = DATA_FLOOR_BY_MARKET.get(market, pd.Timestamp('1970-01-01'))
     if fetch_start < floor:

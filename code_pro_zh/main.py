@@ -718,7 +718,7 @@ def _drill_with_anchor(market, symbol, next_iv, anchor):
     一旦传入,就被 render_and_push 存进新栈帧的 locked_anchor 字段。
     """
     peak_ts = _dt.datetime.fromisoformat(anchor['peak_iso'])
-    win_start, win_end = compute_divergence_drill_window(peak_ts, next_iv)
+    win_start, win_end = compute_divergence_drill_window(peak_ts, next_iv, market)
     render_and_push(market, symbol, next_iv, win_start, win_end,
                     locked_anchor=anchor)
 

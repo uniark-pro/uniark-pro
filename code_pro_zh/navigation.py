@@ -11,11 +11,17 @@
   4. 重复直到金字塔末端(crypto 是 15m,三个 stock market 都是 1h)
 
 钻取窗口公式:
-  fetch_start = peak_iso - BEFORE × next_interval_minutes
-  fetch_end   = peak_iso + AFTER  × next_interval_minutes
-  
+  fetch_start = peak_iso - BEFORE × next_interval_minutes × trading_factor
+  fetch_end   = peak_iso + AFTER  × next_interval_minutes × trading_factor
+
   BEFORE >> AFTER:大头放在 peak 之前,因为我们看的是"什么导致了这次极值",
   AFTER 留一段是给后续验证/印证用,过小则刚翻号就没了。
+
+  trading_factor: crypto = 1.0 (24/7 连续);stock daily/weekly = 1.0
+  (yfinance/akshare 只返交易日 bar,节假日不补);stock intraday (1h 等) =
+  (24 / 交易小时数) × (7 / 5),A 股 1h 因子最大达 ~8.4。详见
+  compute_lookback_factor。同一个 factor 函数也被 plot_kline._compute_fetch_start
+  用来放大 lookback,两处保持一致。
 
 为什么不再做"等距切段"(旧设计):
   等距切段把当前窗口机械地切成 N 段,每段一个按钮——但这些段未必对应
@@ -74,6 +80,54 @@ INTERVAL_MINUTES = {
 }
 
 
+# ── 交易日因子配置 ──────────────────────────────────────────────────
+# 给 stock 盘中粒度（1h 等）做"物理时间 → 实际 K 线根数"换算用。
+#
+# 问题来源：钻取窗口 / lookback 都按 "N 根 K 线 × 单根 K 线分钟数" 推物理时间，
+# 这在 crypto 24/7 市场没问题（200 物理小时 = 200 根 1h K 线），但 stock 1h
+# 每个交易日只有几小时交易，物理时间往前推 200 小时只能拿到 ~24 根 1h K 线，
+# 严重低估窗口（MA99 缺失、钻取窗口比预期窄 6-8 倍）。
+#
+# 修正：在物理时间上乘以 (24 / 交易小时数) × (7 / 5)
+#                            │     日内交易窗口拉伸    │ 周末日历日补偿
+#
+#   - A 股: 09:30-11:30 + 13:00-15:00 = 4 小时 / 日（最短，午休 1.5h）
+#   - 港股: 09:30-12:00 + 13:00-16:00 = 5.5 小时 / 日
+#   - 美股: 09:30-16:00 = 6.5 小时 / 日（连续无午休）
+# 任何 stock market 未在此表注册，按 6.5（美股值）做安全估计。
+TRADING_HOURS_PER_DAY = {
+    'us_stock': 6.5,
+    'hk_stock': 5.5,
+    'cn_stock': 4.0,
+}
+
+# 需要做交易日因子换算的 intraday 粒度。daily / weekly / 3day 不在此列：
+# 这些粒度本身就以"交易日"为单位，yfinance/akshare 不补节假日 bar，按物理时间
+# 推 200 根的时长，得到的实际 K 线根数已 ≈ N。
+INTRADAY_INTERVALS = ('15m', '30m', '1h', '4h')
+
+
+def compute_lookback_factor(market, interval):
+    """
+    返回 "N 根 K 线物理时间" 的放大倍数。
+
+    crypto 任意 interval / stock 的 daily 及以上：factor = 1（不放大）
+    stock 的 intraday 粒度：factor = (24 / 交易小时数) × (7 / 5)
+
+    这个函数同时被两处调用，保持一致：
+      - plot_kline._compute_fetch_start: 放大 LOOKBACK_BARS 的物理跨度，
+        让 MA99/MACD 在 start_str 处稳定
+      - navigation.compute_divergence_drill_window: 放大背离钻取的
+        BEFORE / AFTER 窗口，让钻取后图上能看到完整 585 根次级 K 线
+    """
+    if market == 'crypto':
+        return 1.0
+    if interval not in INTRADAY_INTERVALS:
+        return 1.0
+    hours_per_day = TRADING_HOURS_PER_DAY.get(market, 6.5)
+    return (24.0 / hours_per_day) * (7.0 / 5.0)
+
+
 # ── 顶级入口：周线 4 个 3 年段（仅供历史代码引用，新代码用 settings）─────
 TOP_RANGES = [
     {'label': '2017-08 ~ 2020-05', 'start': '17 Aug, 2017', 'end': '30 May, 2020'},
@@ -121,7 +175,7 @@ def has_drilldown(interval, market='crypto'):
     return next_interval(interval, market) is not None
 
 
-def compute_divergence_drill_window(peak_ts, next_iv):
+def compute_divergence_drill_window(peak_ts, next_iv, market='crypto'):
     """
     给定背离极值时间 + 目标钻取周期,计算钻取窗口的起止时间。
 
@@ -131,6 +185,11 @@ def compute_divergence_drill_window(peak_ts, next_iv):
         背离极值时间(底背离 = K 线最低价时间,顶背离 = K 线最高价时间)
     next_iv : str
         目标钻取周期,如 'daily' / '4h' / '1h' 等
+    market : str
+        所属 market（'crypto' / 'us_stock' / 'cn_stock' / 'hk_stock'）。
+        默认 'crypto' 是为了向后兼容老调用方,但对 stock + intraday 组合
+        必须显式传入,否则 stock 1h 钻取窗口会被压缩 5-8 倍。
+        所有产用调用方（main.py / app.py JS / api 层）都应当传入实际 market。
 
     Returns
     -------
@@ -142,8 +201,9 @@ def compute_divergence_drill_window(peak_ts, next_iv):
     if next_iv not in INTERVAL_MINUTES:
         raise ValueError(f"未知 interval: {next_iv!r}")
     minutes = INTERVAL_MINUTES[next_iv]
-    before = _dt.timedelta(minutes=minutes * DIVERGENCE_DRILL_BARS_BEFORE)
-    after  = _dt.timedelta(minutes=minutes * DIVERGENCE_DRILL_BARS_AFTER)
+    factor = compute_lookback_factor(market, next_iv)
+    before = _dt.timedelta(minutes=minutes * DIVERGENCE_DRILL_BARS_BEFORE * factor)
+    after  = _dt.timedelta(minutes=minutes * DIVERGENCE_DRILL_BARS_AFTER  * factor)
     return peak_ts - before, peak_ts + after
 
 

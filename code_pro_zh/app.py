@@ -40,7 +40,8 @@ sys.path.insert(0, _DIR)
 from plot_kline import render_chart, serialize_divergences
 from navigation import (NEXT_INTERVAL_BY_MARKET, INTERVAL_MINUTES,
                         DIVERGENCE_DRILL_BARS_BEFORE,
-                        DIVERGENCE_DRILL_BARS_AFTER)
+                        DIVERGENCE_DRILL_BARS_AFTER,
+                        TRADING_HOURS_PER_DAY, INTRADAY_INTERVALS)
 import settings
 from settings import MARKETS, ENTRY_INTERVALS_BY_MARKET, get_entry_intervals
 
@@ -360,6 +361,9 @@ HTML = r"""
   const INTERVAL_MINUTES           = {{ interval_minutes_json | safe }};
   const DIV_DRILL_BARS_BEFORE      = {{ div_drill_bars_before_json | safe }};
   const DIV_DRILL_BARS_AFTER       = {{ div_drill_bars_after_json | safe }};
+  // 交易日因子配置（跟后端 navigation 一致）
+  const TRADING_HOURS_PER_DAY      = {{ trading_hours_per_day_json | safe }};
+  const INTRADAY_INTERVALS         = {{ intraday_intervals_json | safe }};
   let curLang                      = {{ language_json | safe }};
   let selMarket                    = {{ market_json | safe }};
   // 每个 market 各自的 symbols + ranges_by_iv
@@ -542,12 +546,23 @@ HTML = r"""
     const m = NEXT_INTERVAL_BY_MK[market] || {};
     return m[iv] || null;
   }
-  // 钻取窗口:peak ± (BEFORE, AFTER) 根次级 K 线时长
-  function computeDivDrillWindow(peakIso, nextIv) {
+  // 钻取窗口:peak ± (BEFORE, AFTER) × factor 根次级 K 线时长。
+  // factor 跟后端 navigation.compute_lookback_factor 一致:
+  //   - crypto / stock daily 及以上 = 1.0
+  //   - stock intraday (1h 等) = (24/交易小时数)×(7/5),A 股 1h 约 8.4
+  function computeLookbackFactor(market, interval) {
+    if (market === 'crypto') return 1.0;
+    if (INTRADAY_INTERVALS.indexOf(interval) < 0) return 1.0;
+    const hoursPerDay = TRADING_HOURS_PER_DAY[market] !== undefined
+        ? TRADING_HOURS_PER_DAY[market] : 6.5;
+    return (24.0 / hoursPerDay) * (7.0 / 5.0);
+  }
+  function computeDivDrillWindow(peakIso, nextIv, market) {
     const peakMs = new Date(peakIso).getTime();
     const min = INTERVAL_MINUTES[nextIv];
-    const before = DIV_DRILL_BARS_BEFORE * min * 60 * 1000;
-    const after  = DIV_DRILL_BARS_AFTER  * min * 60 * 1000;
+    const factor = computeLookbackFactor(market, nextIv);
+    const before = DIV_DRILL_BARS_BEFORE * min * factor * 60 * 1000;
+    const after  = DIV_DRILL_BARS_AFTER  * min * factor * 60 * 1000;
     return [
       new Date(peakMs - before).toISOString(),
       new Date(peakMs + after).toISOString(),
@@ -854,7 +869,7 @@ HTML = r"""
 
   // 通用钻取入口:启动锁定链 / 沿锁定链继续都走这里
   function drillWithAnchor(market, symbol, nextIv, anchor) {
-    const [s, e] = computeDivDrillWindow(anchor.peak_iso, nextIv);
+    const [s, e] = computeDivDrillWindow(anchor.peak_iso, nextIv, market);
     pushAndRender(market, symbol, nextIv, s, e, anchor);
   }
 
@@ -1262,6 +1277,9 @@ def index():
         interval_minutes_json       = json.dumps(INTERVAL_MINUTES),
         div_drill_bars_before_json  = json.dumps(DIVERGENCE_DRILL_BARS_BEFORE),
         div_drill_bars_after_json   = json.dumps(DIVERGENCE_DRILL_BARS_AFTER),
+        # 交易日因子用：让前端 JS 也能算出 (24/交易小时数)×(7/5)，跟后端 navigation.compute_lookback_factor 保持一致
+        trading_hours_per_day_json  = json.dumps(TRADING_HOURS_PER_DAY),
+        intraday_intervals_json     = json.dumps(list(INTRADAY_INTERVALS)),
         language_json               = json.dumps(cur['language']),
         market_json                 = json.dumps(cur['market']),
         symbols_by_mk_json          = json.dumps(symbols_by_mk),
