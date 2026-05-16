@@ -181,12 +181,18 @@ HTML = r"""
     .div-card:hover { border-color: #f7a26a; }
     .div-card.locked { border-color: #f7a26a; border-width: 1.5px; }
     .div-card.locked:hover { border-color: #ffb070; }
+    /* provisional(未完成)信号不可钻取:去掉指针光标和 hover 高亮 */
+    .div-card.provisional { cursor: default; opacity: 0.8; }
+    .div-card.provisional:hover { border-color: #44446a; }
     .div-card-head { font-size: 0.78rem; margin-bottom: 2px; font-weight: 500; }
     .div-card-head.bullish     { color: #ff5566; }
     .div-card-head.bearish     { color: #22cc44; }
     .div-card-head.provisional { color: #1e90ff; }
     .div-card-head.locked      { color: #f7a26a; }
     .div-card-body { font-size: 0.92rem; color: #e0e0f0; }
+    /* provisional 卡片底部的灰字说明 */
+    .div-card-note { font-size: 0.72rem; color: #6c7a99;
+                     margin-top: 4px; font-style: italic; }
     .div-empty { color: #8888aa; font-size: 0.85rem; padding: 4px 0; }
 
     #status-1, #status-2, #status-set { text-align: center; font-size: 0.85rem;
@@ -399,6 +405,7 @@ HTML = r"""
       div_none:         '(No divergence detected in current view)',
       div_bullish:      'Bullish',
       div_bearish:      'Bearish',
+      div_provisional:  'Provisional — not yet closed, drill-down disabled',
       iv: { '15m':'15m','30m':'30m','1h':'1h','4h':'4h',
             'daily':'Daily','3day':'3-Day','weekly':'Weekly' },
       mk: { 'crypto': 'Crypto',
@@ -450,6 +457,7 @@ HTML = r"""
       div_none:         '(当前视图未检测到背离信号)',
       div_bullish:      '底背离',
       div_bearish:      '顶背离',
+      div_provisional:  '未完成 · 尚未封口,暂不可钻取',
       iv: { '15m':'15分钟','30m':'30分钟','1h':'1小时','4h':'4小时',
             'daily':'日线','3day':'3日线','weekly':'周线' },
       mk: { 'crypto': '虚拟币',
@@ -859,10 +867,14 @@ HTML = r"""
         `<div class="div-card-head ${cssKind}">` +
           `${idx+1}/${n} · ${kindText} · ${lvTag}  ${ratioPct}%${provSuffix}` +
         `</div>` +
-        `<div class="div-card-body">@ ${peakStr}  ▸ ${ivLabel(nextIv)}</div>`;
-      // 点击 = 用 div 的完整锚点(peak_iso + s3 时间窗 + kind + parent_interval)启动锁定链
-      el.onclick = () => drillWithAnchor(top.market, top.symbol, nextIv,
-                                          divToAnchor(d, top.interval));
+        `<div class="div-card-body">@ ${peakStr}  ▸ ${ivLabel(nextIv)}</div>` +
+        (isProv ? `<div class="div-card-note">${tx.div_provisional}</div>` : '');
+      // 点击 = 用 div 的完整锚点(peak_iso + s3 时间窗 + kind + parent_interval)启动锁定链。
+      // provisional(未完成)信号还未封口,不允许钻取——与公众号宣传一致,不绑定点击。
+      if (!isProv) {
+        el.onclick = () => drillWithAnchor(top.market, top.symbol, nextIv,
+                                            divToAnchor(d, top.interval));
+      }
       grid.appendChild(el);
     });
   }

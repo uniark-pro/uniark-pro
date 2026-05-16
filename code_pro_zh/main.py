@@ -107,6 +107,7 @@ I18N = {
         'div_none':  "(No divergence detected in current view)",
         'div_bullish': "Bullish",
         'div_bearish': "Bearish",
+        'div_provisional': "Provisional — not yet closed, drill-down disabled",
     },
     'zh': {
         'title':     "K线",
@@ -135,6 +136,7 @@ I18N = {
         'div_none':  "(当前视图未检测到背离信号)",
         'div_bullish': "底背离",
         'div_bearish': "顶背离",
+        'div_provisional': "未完成 · 尚未封口,暂不可钻取",
     }
 }
 
@@ -636,17 +638,27 @@ def build_divgrid():
         body_text = f"@ {peak_str}  ▸ {t('iv_' + next_iv)}"
         body = tk.Label(card, text=body_text,
                         font=FONT_SUB, bg=BG_CARD, fg=FG, anchor="w",
-                        cursor="hand2")
-        body.pack(fill="x", padx=10, pady=(0, 6))
+                        cursor=("arrow" if provisional else "hand2"))
+        body.pack(fill="x", padx=10,
+                  pady=(0, 6) if not provisional else (0, 0))
 
-        # 点击 = 用 div 的完整锚点(peak_iso + s3 时间窗 + kind + parent_interval)启动锁定链
-        for w in (card, head, body):
-            w.bind("<Button-1>",
-                   lambda evt, dd=d: _drill_with_anchor(
-                       top['market'], top['symbol'], next_iv,
-                       _div_to_anchor(dd, top['interval']),
-                   ))
-            w.configure(cursor="hand2")
+        # provisional(未完成)信号:卡片底部补一行灰字说明,讲清"为什么点不动"
+        note = None
+        if provisional:
+            note = tk.Label(card, text=t('div_provisional'),
+                            font=FONT_SUB_S, bg=BG_CARD, fg=FG_DIM, anchor="w")
+            note.pack(fill="x", padx=10, pady=(0, 6))
+
+        # 点击 = 用 div 的完整锚点(peak_iso + s3 时间窗 + kind + parent_interval)启动锁定链。
+        # provisional(未完成)信号还未封口,不允许钻取——与公众号宣传一致,不绑定点击。
+        if not provisional:
+            for w in (card, head, body):
+                w.bind("<Button-1>",
+                       lambda evt, dd=d: _drill_with_anchor(
+                           top['market'], top['symbol'], next_iv,
+                           _div_to_anchor(dd, top['interval']),
+                       ))
+                w.configure(cursor="hand2")
 
 
 def _render_locked_card(top, next_iv, locked_anchor):
