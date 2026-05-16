@@ -1,6 +1,6 @@
 {
   "language": "zh",
-  "market": "hk_stock",
+  "market": "cn_stock",
   "crypto": {
     "symbols": [
       {
@@ -177,8 +177,8 @@
         "cn_name": "比亚迪"
       },
       {
-        "ticker": "601318.SS",
-        "cn_name": "中国平安"
+        "ticker": "002139.SZ",
+        "cn_name": "拓邦股份"
       }
     ],
     "ranges": {
@@ -200,7 +200,7 @@
         },
         {
           "label": "2025-01 ~ 2027-01",
-          "start": "01 Jan, 2023",
+          "start": "01 Jan, 2025",
           "end": "01 Jan, 2027"
         }
       ],

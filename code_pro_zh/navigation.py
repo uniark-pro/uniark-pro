@@ -14,7 +14,7 @@
   fetch_start = peak_iso - BEFORE × next_interval_minutes × trading_factor
   fetch_end   = peak_iso + AFTER  × next_interval_minutes × trading_factor
 
-  BEFORE >> AFTER:大头放在 peak 之前,因为我们看的是"什么导致了这次极值",
+  BEFORE > AFTER:大头放在 peak 之前,因为我们看的是"什么导致了这次极值",
   AFTER 留一段是给后续验证/印证用,过小则刚翻号就没了。
 
   trading_factor: crypto = 1.0 (24/7 连续);stock daily/weekly = 1.0
@@ -142,24 +142,26 @@ TOP_RANGES = [
 #   - BEFORE 根:peak 之前,显示"是什么导致了这次极值"
 #   - AFTER  根:peak 之后,印证/确认极值是否成立 + 容纳 S_last 在 peak 之后
 #                的延伸 + 父级一根 K 线在子级别上的物理时长
-# 总窗口 = BEFORE + 1(peak 本身)+ AFTER = 585 根次级 K 线。
-# BEFORE 远大于 AFTER 因为信号的形成过程更值得回看。
+# 总窗口 = BEFORE + 1(peak 本身)+ AFTER = 286 根次级 K 线。
+# BEFORE 大于 AFTER 因为信号的形成过程更值得回看。
 #
-# AFTER 为什么是 230 而不是更小的 130
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# 窗口收窄到 286(早期曾用 585)
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# 更窄的窗口让目标背离结构占据画面主体,不被前后大量无关的宏观结构淹没;
+# 同时数据量更小,对 yfinance 1h 的 730 天硬墙也更安全。
+#
+# AFTER 下限约束(MA99 染色覆盖需求)
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # peak_iso 是父级 K 线的 open_time,但 K 线物理覆盖 [open_time, open_time+
 # 一根父级 K 线时长)。同时 S_last 内 peak 之后可能还有几根 K 线没结束。
 # 要让子级别图能完整展示锁定的 S_last 时间段(MA99 红色染色到 s3_end 的
 # 物理右边界),AFTER 必须满足:
 #   AFTER × next_iv_min ≥ (s3_end - peak) + 1 个父级 K 线时长
-#
-# 最坏情况下:daily 父级 + 30m 子级 + peak 在 S_last 中段、s3_end-peak ≈ 1 天:
-#   需求 AFTER ≥ (1天 + 1天) / 30min = 96 根
-# 4h 父级 + 1h 子级 + s3_end-peak ≈ 2 根 4h:
-#   需求 AFTER ≥ (8 + 4) 小时 / 1小时 = 12 根
-# 取 230 给跨多个父周期的极端 case 留充足缓冲,且仍保持 BEFORE >> AFTER。
-DIVERGENCE_DRILL_BARS_BEFORE = 354
-DIVERGENCE_DRILL_BARS_AFTER  = 230
+# 最坏情况:daily 父级 + 30m 子级、s3_end-peak ≈ 1 天 → 需求 AFTER ≥ 96。
+# 4h 父级 + 1h 子级 → 需求 AFTER ≥ 12。
+# AFTER=100 压住了 96 这条线(裕量 4 根),不可再往下调。
+DIVERGENCE_DRILL_BARS_BEFORE = 185
+DIVERGENCE_DRILL_BARS_AFTER  = 100
 
 
 # ── 主算法 ──────────────────────────────────────────────────────────
