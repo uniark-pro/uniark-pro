@@ -1,0 +1,8 @@
+python-binance>=1.0.19
+# 必须 <3.0：pandas 3.0 把 Copy-on-Write 设为强制默认，
+# 派生数组变只读，会导致 "assignment destination is read-only"
+pandas>=2.0.0,<3.0
+numpy>=1.24.0
+mplfinance>=0.12.10b0
+matplotlib>=3.7.0
+flask>=2.3.0

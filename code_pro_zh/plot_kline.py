@@ -314,10 +314,13 @@ def render_chart(market, symbol, interval, start_str=None, end_str=None,
     df = add_indicators(df)
     df = add_ma(df)
     # 内存过滤保留，处理浮点边界 / 时区折叠等情况（成本忽略不计）
+    # 末尾 .copy()：pandas Copy-on-Write 下布尔切片返回的是只读视图
+    # （.values 的 WRITEABLE=False）。下游若有库对数组做原地写入会抛
+    # "assignment destination is read-only"。.copy() 强制成可写独立帧。
     if start_str:
-        df = df[df.index >= pd.Timestamp(start_str)]
+        df = df[df.index >= pd.Timestamp(start_str)].copy()
     if end_str:
-        df = df[df.index <= pd.Timestamp(end_str)]
+        df = df[df.index <= pd.Timestamp(end_str)].copy()
 
     if len(df) == 0:
         raise ValueError(
