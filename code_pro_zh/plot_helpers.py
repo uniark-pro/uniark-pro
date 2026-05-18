@@ -118,6 +118,22 @@ def annotate_divergences(macd_ax, df, divergences):
         ratio_pct  = div['ratio'] * 100
         level      = div['level']
         is_bullish = div['kind'] == 'bullish'
+        # ── level 0：价格极值标识（标准三段背离漏掉、由反向 hist 段承载的
+        #    顶/底极值）。只画一个三角锚在极值 K 线上，无 Lv / 百分比文字。
+        if level == 0:
+            pk = div.get('peak_idx', int((s3s + s3e) / 2))
+            if is_bullish:
+                y_marker = -off_marker          # ▲ 落在 0 轴下方
+                macd_ax.scatter([pk], [y_marker], marker='^', s=MARKER_SIZE,
+                                color=COLOR_BULLISH, edgecolors='white',
+                                linewidths=MARKER_EDGE, zorder=5)
+            else:
+                y_marker = +off_marker          # ▼ 落在 0 轴上方
+                macd_ax.scatter([pk], [y_marker], marker='v', s=MARKER_SIZE,
+                                color=COLOR_BEARISH, edgecolors='white',
+                                linewidths=MARKER_EDGE, zorder=5)
+            marker_ys.append(y_marker)
+            continue
         # provisional 用 .get 兼容老版 dict（可能没这字段）
         provisional = div.get('provisional', False)
         # 文字色：provisional 时切 dodger blue，否则跟箭头同色

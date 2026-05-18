@@ -107,6 +107,7 @@ I18N = {
         'div_none':  "(No divergence detected in current view)",
         'div_bullish': "Bullish",
         'div_bearish': "Bearish",
+        'div_extreme': "Extreme",
         'div_provisional': "Provisional — not yet closed, drill-down disabled",
     },
     'zh': {
@@ -136,6 +137,7 @@ I18N = {
         'div_none':  "(当前视图未检测到背离信号)",
         'div_bullish': "底背离",
         'div_bearish': "顶背离",
+        'div_extreme': "极值",
         'div_provisional': "未完成 · 尚未封口,暂不可钻取",
     }
 }
@@ -620,7 +622,7 @@ def build_divgrid():
         else:
             head_color = DIV_BEARISH_FG
         kind_text  = t('div_bullish') if d['kind'] == 'bullish' else t('div_bearish')
-        lv_tag     = f"L{d['level']}"
+        is_extreme = d['level'] == 0
         prov_suffix = " ?" if provisional else ""
         ratio_pct  = int(round(d['ratio'] * 100))
         # peak 时间格式跟当前(父级)周期的颗粒度一致
@@ -630,7 +632,12 @@ def build_divgrid():
                         highlightthickness=1, highlightbackground=BORDER)
         card.grid(row=r, column=c, sticky="nsew", padx=2, pady=2)
 
-        head_text = f"{i+1}/{n} · {kind_text} · {lv_tag}  {ratio_pct}%{prov_suffix}"
+        # level 0 = 价格极值标识（标准三段背离漏掉的那类）：无 Lv / 无面积比
+        if is_extreme:
+            head_text = f"{i+1}/{n} · {kind_text} · {t('div_extreme')}"
+        else:
+            head_text = (f"{i+1}/{n} · {kind_text} · "
+                         f"L{d['level']}  {ratio_pct}%{prov_suffix}")
         head = tk.Label(card, text=head_text,
                         font=FONT_SUB_S, bg=BG_CARD, fg=head_color, anchor="w")
         head.pack(fill="x", padx=10, pady=(6, 0))

@@ -64,7 +64,7 @@ matplotlib.rcParams['axes.unicode_minus'] = False
 
 from data import get_klines
 from indicator import add_indicators
-from divergence import find_three_segment_divergences
+from divergence import find_three_segment_divergences, find_missed_extremes
 from plot_helpers import annotate_divergences, print_divergences
 from navigation import INTERVAL_MINUTES, compute_lookback_factor
 import mplfinance as mpf
@@ -314,10 +314,13 @@ def render_chart(market, symbol, interval, start_str=None, end_str=None,
     df = add_indicators(df)
     df = add_ma(df)
     # 内存过滤保留，处理浮点边界 / 时区折叠等情况（成本忽略不计）
+    # 末尾 .copy()：pandas Copy-on-Write 下布尔切片返回的是只读视图
+    # （.values 的 WRITEABLE=False）。下游若有库对数组做原地写入会抛
+    # "assignment destination is read-only"。.copy() 强制成可写独立帧。
     if start_str:
-        df = df[df.index >= pd.Timestamp(start_str)]
+        df = df[df.index >= pd.Timestamp(start_str)].copy()
     if end_str:
-        df = df[df.index <= pd.Timestamp(end_str)]
+        df = df[df.index <= pd.Timestamp(end_str)].copy()
 
     if len(df) == 0:
         raise ValueError(
@@ -380,6 +383,14 @@ def render_chart(market, symbol, interval, start_str=None, end_str=None,
         min_bars=iv_cfg['min_bars'],
         max_level=iv_cfg['max_level'],
     )
+    # 补检「价格极值落在反向 hist 段」的背离（标准三段背离漏掉、由红/绿
+    # 反向段承载的顶/底极值）。并入同一列表 —— annotate / serialize / 钻取
+    # 全程沿用既有管线，标准检测逻辑不受影响。不与标准背离交叉去重：两者
+    # 锚点必在不同颜色的段、不同 K 线上，结构上不可能重复。
+    divergences += find_missed_extremes(
+        df['hist'], df['low'], df['high'],
+    )
+    divergences.sort(key=lambda d: (d['s3_start'], d['level']))
     if macd_ax is not None:
         annotate_divergences(macd_ax, df, divergences)
 

@@ -537,3 +537,121 @@ def find_three_segment_divergences(hist_series, low_series, high_series,
 
     out.sort(key=lambda d: (d['s3_start'], d['level']))
     return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 补检：价格极值落在反向 hist 段上的背离（标准三段背离漏掉的那一类）
+# ─────────────────────────────────────────────────────────────────────────────
+def _make_extreme_record(kind, seg_s1, seg_s3, peak_idx):
+    """构造一条 level=0 的极值记录，与 find_three_segment_divergences 输出同构，
+    可直接并入其返回列表被 annotate / serialize / 钻取复用。
+
+    provisional 恒为 False
+    ----------------------
+    三段背离的 provisional 表示 S_last 还在长、面积比是快照。本类极值的
+    判据「后段同类极值 越过 前段」是单调稳定的：前段已封口、后段对应极值
+    只会朝越界方向单调移动，条件一旦成立即为定论，不存在"待封口"。后续
+    K 线至多让 peak_idx 挪到更极端的一根，信号本身不被推翻。故不设
+    provisional，检出即可钻取。"""
+    return {
+        'kind':             kind,
+        'level':            0,
+        's1_start':         seg_s1['start'],
+        's1_end':           seg_s1['end'],
+        's3_start':         seg_s3['start'],   # 承载极值的反向段（顶=红 / 底=绿）
+        's3_end':           seg_s3['end'],
+        's1_area':          seg_s1['area'],
+        's3_area':          seg_s3['area'],
+        's1_bars':          seg_s1['bars'],
+        's2_bars':          0,
+        's3_bars':          seg_s3['bars'],
+        'ratio':            0.0,               # 反向段不比力度，无面积比
+        'provisional':      False,             # 单调稳定，检出即定论
+        'same_terminal_l1': False,
+        'peak_idx':         peak_idx,          # 极值 K 线下标，annotate 据此定位
+    }
+
+
+def find_missed_extremes(hist_series, low_series, high_series):
+    """
+    补检「价格极值落在反向 hist 段上」的背离 —— 标准三段背离漏掉的那一类。
+
+    动机
+    ----
+    标准顶背离要一个"又弱又创新高"的绿色 S_last 段；标准底背离要一个红色
+    S_last 段。但价格的真正顶/底点常出现在 MACD hist 已翻向之后的若干根
+    K 线上（动量先于价格转向）。这种极值落在反向颜色的 hist 段里，凑不出
+    绿-红-绿 / 红-绿-红 结构，标准检测一条不报，钻取也无从锚定。
+
+    规则（相邻反向段比较）
+    ----------------------
+    顶：绿段 G 紧跟红段 R。R 段最高价 >= G 段最高价 —— 价格高点落在红段 R
+        里 —— 则 R 内那根新高 K 线是被漏掉的顶背离极值点，锚定在红段 R 上。
+    底：红段 R 紧跟绿段 G。G 段最低价 <= R 段最低价 —— 价格低点落在绿段 G
+        里 —— 则 G 内那根新低 K 线是被漏掉的底背离极值点，锚定在绿段 G 上。
+
+    为什么是"相邻段比较"而非"全程结构级新高/新低"
+    ------------------------------------------------
+    全程 running-max/min 会漏真实极值：若可视窗口起点本身就是更深的低点
+    （例如窗口从更早的大底开始），后面一个真实的局部大底永远跨不过窗口
+    起点而被漏标。相邻反向段比较只问"价格有没有越过动量转向前那一段的
+    极值"，与窗口起点无关，且天然自限——只有当反向段比它前面那段同类极值
+    更极端时才触发，这恰是"价格冲过了动量"的真实局部转折特征，盘整中继
+    里的普通反向段凑不出这个条件，不会刷屏。
+
+    不比较力度
+    ----------
+    G、R 是方向相反的相邻段，《公理化构建》的力度衰竭只定义在同向段
+    S1/S3 上，对反向段不适用 —— 这里是纯价格规则。
+
+    检出即定论，不设 provisional
+    ----------------------------
+    判据单调稳定（见 _make_extreme_record）：后段还在长也不影响结论。
+    故本函数产出的记录一律 provisional=False，下游钻取门控直接放行。
+
+    不与标准背离交叉去重
+    --------------------
+    本规则存在的前提正是"标准三段背离把锚点放偏了"——标准顶背离锚在绿色
+    S_last 段的最高 K 线，本规则锚在红色 R 段的最高 K 线，一红一绿、永远
+    是不同 K 线，结构上不可能重复。早期版本曾因"附近存在标准背离就跳过"
+    而把最该补的顶极值抹掉（恰好发生在标准背离锚点偏移的场景）。故不做
+    任何与 existing_divs 的交叉去重。补检结果内部也无需去重：每个相邻
+    反向段对至多产一条记录，天然不重。
+
+    返回 list[dict]，与 find_three_segment_divergences 同构，level 恒为 0。
+    s3_* 指向"承载极值的反向段"（顶=红段 / 底=绿段），s1_* 指向其前一段；
+    另含 peak_idx（极值 K 线下标，annotate 据此定位标记）。
+    """
+    raw = find_hist_segments(hist_series)
+    out = []
+    if len(raw) < 2:
+        return out
+
+    # raw 段严格交替（同号连续段已被 find_hist_segments 归并），
+    # 故每个相邻对必是一红一绿。
+    for idx in range(1, len(raw)):
+        prev, seg = raw[idx - 1], raw[idx]
+        ps, pe = prev['start'], prev['end']
+        s,  e  = seg['start'],  seg['end']
+        try:
+            if prev['sign'] == 'pos' and seg['sign'] == 'neg':
+                # 绿段 G(prev) → 红段 R(seg)：R 段高点 >= G 段高点 → 漏掉的顶
+                g_high  = float(np.nanmax(high_series.iloc[ps:pe + 1].values))
+                r_highs = high_series.iloc[s:e + 1].values
+                if float(np.nanmax(r_highs)) >= g_high:
+                    peak_idx = s + int(np.nanargmax(r_highs))
+                    out.append(_make_extreme_record('bearish', prev, seg,
+                                                    peak_idx))
+            elif prev['sign'] == 'neg' and seg['sign'] == 'pos':
+                # 红段 R(prev) → 绿段 G(seg)：G 段低点 <= R 段低点 → 漏掉的底
+                r_low  = float(np.nanmin(low_series.iloc[ps:pe + 1].values))
+                g_lows = low_series.iloc[s:e + 1].values
+                if float(np.nanmin(g_lows)) <= r_low:
+                    peak_idx = s + int(np.nanargmin(g_lows))
+                    out.append(_make_extreme_record('bullish', prev, seg,
+                                                    peak_idx))
+        except ValueError:
+            # 整段全 NaN（罕见，停盘）→ 跳过该对
+            continue
+
+    return out

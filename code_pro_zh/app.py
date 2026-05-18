@@ -405,6 +405,7 @@ HTML = r"""
       div_none:         '(No divergence detected in current view)',
       div_bullish:      'Bullish',
       div_bearish:      'Bearish',
+      div_extreme:      'Extreme',
       div_provisional:  'Provisional — not yet closed, drill-down disabled',
       iv: { '15m':'15m','30m':'30m','1h':'1h','4h':'4h',
             'daily':'Daily','3day':'3-Day','weekly':'Weekly' },
@@ -457,6 +458,7 @@ HTML = r"""
       div_none:         '(当前视图未检测到背离信号)',
       div_bullish:      '底背离',
       div_bearish:      '顶背离',
+      div_extreme:      '极值',
       div_provisional:  '未完成 · 尚未封口,暂不可钻取',
       iv: { '15m':'15分钟','30m':'30分钟','1h':'1小时','4h':'4小时',
             'daily':'日线','3day':'3日线','weekly':'周线' },
@@ -856,16 +858,19 @@ HTML = r"""
       const kindText = d.kind === 'bullish' ? tx.div_bullish : tx.div_bearish;
       const cssKind = isProv ? 'provisional' :
                       (d.kind === 'bullish' ? 'bullish' : 'bearish');
-      const lvTag = `L${d.level}`;
+      const isExtreme = d.level === 0;
       const provSuffix = isProv ? ' ?' : '';
       const ratioPct = Math.round(d.ratio * 100);
+      // level 0 = 价格极值标识（标准三段背离漏掉的那类）：无 Lv / 无面积比
+      const metaText = isExtreme ? tx.div_extreme
+                                 : `L${d.level}  ${ratioPct}%${provSuffix}`;
       const peakStr = fmtPeakLabel(d.peak_iso, top.interval);
 
       const el = document.createElement('div');
       el.className = 'div-card ' + cssKind;
       el.innerHTML =
         `<div class="div-card-head ${cssKind}">` +
-          `${idx+1}/${n} · ${kindText} · ${lvTag}  ${ratioPct}%${provSuffix}` +
+          `${idx+1}/${n} · ${kindText} · ${metaText}` +
         `</div>` +
         `<div class="div-card-body">@ ${peakStr}  ▸ ${ivLabel(nextIv)}</div>` +
         (isProv ? `<div class="div-card-note">${tx.div_provisional}</div>` : '');
