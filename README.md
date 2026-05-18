@@ -50,7 +50,7 @@ curl -L https://github.com/uniark-pro/uniark-pro/tarball/main | tar -xz
 mv */code_pro_zh/* .
 rm -rf uniark-pro-uniark-pro-*
 curl -LO https://raw.githubusercontent.com/uniark-pro/uniark-pro/main/requirements.txt
-pip install -r requirements.txt
+pip install -r requirements.txt --upgrade
 ```
 
 > 命令在 Linux(GNU tar)和 macOS(BSD tar)的 bash、zsh 下测试通过。
