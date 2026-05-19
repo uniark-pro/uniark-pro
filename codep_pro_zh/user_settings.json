@@ -1,0 +1,373 @@
+{
+  "language": "zh",
+  "market": "cn_stock",
+  "crypto": {
+    "symbols": [
+      {
+        "ticker": "BTCUSDT",
+        "cn_name": "BTC"
+      },
+      {
+        "ticker": "ETHUSDT",
+        "cn_name": "ETH"
+      },
+      {
+        "ticker": "SOLUSDT",
+        "cn_name": "SOL"
+      },
+      {
+        "ticker": "BNBUSDT",
+        "cn_name": "BNB"
+      },
+      {
+        "ticker": "FILUSDT",
+        "cn_name": "FIL"
+      }
+    ],
+    "ranges": {
+      "weekly": [
+        {
+          "label": "2017-08 ~ 2020-05",
+          "start": "17 Aug, 2017",
+          "end": "30 May, 2020"
+        },
+        {
+          "label": "2020-03 ~ 2022-12",
+          "start": "17 Mar, 2020",
+          "end": "30 Dec, 2022"
+        },
+        {
+          "label": "2022-10 ~ 2025-10",
+          "start": "17 Oct, 2022",
+          "end": "30 Oct, 2025"
+        },
+        {
+          "label": "2025-04 ~ 2027-01",
+          "start": "17 Apr, 2025",
+          "end": "1 Jan, 2027"
+        }
+      ],
+      "3day": [
+        {
+          "label": "2017-08 ~ 2020-05",
+          "start": "17 Aug, 2017",
+          "end": "30 May, 2020"
+        },
+        {
+          "label": "2020-03 ~ 2022-12",
+          "start": "17 Mar, 2020",
+          "end": "30 Dec, 2022"
+        },
+        {
+          "label": "2022-10 ~ 2025-10",
+          "start": "17 Oct, 2022",
+          "end": "30 Oct, 2025"
+        },
+        {
+          "label": "2025-04 ~ 2027-01",
+          "start": "17 Apr, 2025",
+          "end": "1 Jan, 2027"
+        }
+      ],
+      "daily": [
+        {
+          "label": "2017-08 ~ 2020-05",
+          "start": "17 Aug, 2017",
+          "end": "30 May, 2020"
+        },
+        {
+          "label": "2020-03 ~ 2022-12",
+          "start": "17 Mar, 2020",
+          "end": "30 Dec, 2022"
+        },
+        {
+          "label": "2022-10 ~ 2025-10",
+          "start": "17 Oct, 2022",
+          "end": "30 Oct, 2025"
+        },
+        {
+          "label": "2025-04 ~ 2027-01",
+          "start": "17 Apr, 2025",
+          "end": "1 Jan, 2027"
+        }
+      ]
+    }
+  },
+  "us_stock": {
+    "symbols": [
+      {
+        "ticker": "MU",
+        "cn_name": "美光"
+      },
+      {
+        "ticker": "NVDA",
+        "cn_name": "英伟达"
+      },
+      {
+        "ticker": "AAPL",
+        "cn_name": "苹果"
+      },
+      {
+        "ticker": "TSLA",
+        "cn_name": "特斯拉"
+      },
+      {
+        "ticker": "MSFT",
+        "cn_name": "微软"
+      },
+      {
+        "ticker": "MSTR",
+        "cn_name": "微策略"
+      },
+      {
+        "ticker": "PLTR",
+        "cn_name": "帕兰泰尔"
+      }
+    ],
+    "ranges": {
+      "weekly": [
+        {
+          "label": "2018-01 ~ 2021-04",
+          "start": "01 Jan, 2018",
+          "end": "01 Apr, 2021"
+        },
+        {
+          "label": "2021-01 ~ 2024-01",
+          "start": "01 Jan, 2021",
+          "end": "01 Jan, 2024"
+        },
+        {
+          "label": "2025-01 ~ 2027-01",
+          "start": "01 Jan, 2025",
+          "end": "01 Jan, 2027"
+        }
+      ],
+      "3day": [
+        {
+          "label": "2018-01 ~ 2021-04",
+          "start": "01 Jan, 2018",
+          "end": "01 Apr, 2021"
+        },
+        {
+          "label": "2021-01 ~ 2024-01",
+          "start": "01 Jan, 2021",
+          "end": "01 Jan, 2024"
+        },
+        {
+          "label": "2025-01 ~ 2027-01",
+          "start": "01 Jan, 2025",
+          "end": "01 Jan, 2027"
+        }
+      ],
+      "daily": [
+        {
+          "label": "2018-01 ~ 2021-04",
+          "start": "01 Jan, 2018",
+          "end": "01 Apr, 2021"
+        },
+        {
+          "label": "2021-01 ~ 2024-01",
+          "start": "01 Jan, 2021",
+          "end": "01 Jan, 2024"
+        },
+        {
+          "label": "2025-01 ~ 2027-01",
+          "start": "01 Jan, 2025",
+          "end": "01 Jan, 2027"
+        }
+      ]
+    }
+  },
+  "cn_stock": {
+    "symbols": [
+      {
+        "ticker": "002139.SZ",
+        "cn_name": "拓邦股份"
+      },
+      {
+        "ticker": "300364.SZ",
+        "cn_name": "中文在线"
+      },
+      {
+        "ticker": "600715.SS",
+        "cn_name": "文投控股"
+      },
+      {
+        "ticker": "002425.SZ",
+        "cn_name": "凯撒文化"
+      },
+      {
+        "ticker": "300363.SZ",
+        "cn_name": "博腾股份"
+      },
+      {
+        "ticker": "301611.SZ",
+        "cn_name": "珂玛科技"
+      },
+      {
+        "ticker": "301511.SZ",
+        "cn_name": "德福科技"
+      }
+    ],
+    "ranges": {
+      "weekly": [
+        {
+          "label": "2014-01 ~ 2017-01",
+          "start": "01 Jan, 2014",
+          "end": "01 Jan, 2017"
+        },
+        {
+          "label": "2017-01 ~ 2020-01",
+          "start": "01 Jan, 2017",
+          "end": "01 Jan, 2020"
+        },
+        {
+          "label": "2020-01 ~ 2023-01",
+          "start": "01 Jan, 2020",
+          "end": "01 Jan, 2023"
+        },
+        {
+          "label": "2025-01 ~ 2027-01",
+          "start": "01 Jan, 2025",
+          "end": "01 Jan, 2027"
+        }
+      ],
+      "3day": [
+        {
+          "label": "2014-01 ~ 2017-01",
+          "start": "01 Jan, 2014",
+          "end": "01 Jan, 2017"
+        },
+        {
+          "label": "2017-01 ~ 2020-01",
+          "start": "01 Jan, 2017",
+          "end": "01 Jan, 2020"
+        },
+        {
+          "label": "2020-01 ~ 2023-01",
+          "start": "01 Jan, 2020",
+          "end": "01 Jan, 2023"
+        },
+        {
+          "label": "2025-01 ~ 2027-01",
+          "start": "01 Jan, 2025",
+          "end": "01 Jan, 2027"
+        }
+      ],
+      "daily": [
+        {
+          "label": "2014-01 ~ 2017-01",
+          "start": "01 Jan, 2014",
+          "end": "01 Jan, 2017"
+        },
+        {
+          "label": "2017-01 ~ 2020-01",
+          "start": "01 Jan, 2017",
+          "end": "01 Jan, 2020"
+        },
+        {
+          "label": "2020-01 ~ 2023-01",
+          "start": "01 Jan, 2020",
+          "end": "01 Jan, 2023"
+        },
+        {
+          "label": "2025-01 ~ 2027-01",
+          "start": "01 Jan, 2025",
+          "end": "01 Jan, 2027"
+        }
+      ]
+    }
+  },
+  "hk_stock": {
+    "symbols": [
+      {
+        "ticker": "0700.HK",
+        "cn_name": "腾讯"
+      },
+      {
+        "ticker": "9988.HK",
+        "cn_name": "阿里巴巴"
+      },
+      {
+        "ticker": "3690.HK",
+        "cn_name": "美团"
+      },
+      {
+        "ticker": "1810.HK",
+        "cn_name": "小米"
+      },
+      {
+        "ticker": "0388.HK",
+        "cn_name": "港交所"
+      }
+    ],
+    "ranges": {
+      "weekly": [
+        {
+          "label": "2017-01 ~ 2020-01",
+          "start": "01 Jan, 2017",
+          "end": "01 Jan, 2020"
+        },
+        {
+          "label": "2020-01 ~ 2023-01",
+          "start": "01 Jan, 2020",
+          "end": "01 Jan, 2023"
+        },
+        {
+          "label": "2022-01 ~ 2025-01",
+          "start": "01 Jan, 2022",
+          "end": "01 Jan, 2025"
+        },
+        {
+          "label": "2025-01 ~ 2027-01",
+          "start": "01 Jan, 2025",
+          "end": "01 Jan, 2027"
+        }
+      ],
+      "3day": [
+        {
+          "label": "2017-01 ~ 2020-01",
+          "start": "01 Jan, 2017",
+          "end": "01 Jan, 2020"
+        },
+        {
+          "label": "2020-01 ~ 2023-01",
+          "start": "01 Jan, 2020",
+          "end": "01 Jan, 2023"
+        },
+        {
+          "label": "2022-01 ~ 2025-01",
+          "start": "01 Jan, 2022",
+          "end": "01 Jan, 2025"
+        },
+        {
+          "label": "2025-01 ~ 2027-01",
+          "start": "01 Jan, 2025",
+          "end": "01 Jan, 2027"
+        }
+      ],
+      "daily": [
+        {
+          "label": "2017-01 ~ 2020-01",
+          "start": "01 Jan, 2017",
+          "end": "01 Jan, 2020"
+        },
+        {
+          "label": "2020-01 ~ 2023-01",
+          "start": "01 Jan, 2020",
+          "end": "01 Jan, 2023"
+        },
+        {
+          "label": "2022-01 ~ 2025-01",
+          "start": "01 Jan, 2022",
+          "end": "01 Jan, 2025"
+        },
+        {
+          "label": "2025-01 ~ 2027-01",
+          "start": "01 Jan, 2025",
+          "end": "01 Jan, 2027"
+        }
+      ]
+    }
+  }
+}
