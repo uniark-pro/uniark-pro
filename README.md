@@ -42,7 +42,7 @@
 
 ## 安装
 
-需要 Python 3.9 或更新版本。
+需要 Python 3.9 或更新版本,**必须**使用虚拟环境(venv)。
 
 ```bash
 mkdir uniark-pro && cd uniark-pro
@@ -50,36 +50,27 @@ curl -L https://github.com/uniark-pro/uniark-pro/tarball/main | tar -xz
 mv */code_pro_zh/* .
 rm -rf uniark-pro-uniark-pro-*
 curl -LO https://raw.githubusercontent.com/uniark-pro/uniark-pro/main/requirements.txt
-pip install -r requirements.txt --upgrade
+
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
 ```
+
+每次新开终端使用项目前,需 `source venv/bin/activate` 激活虚拟环境。
+
+📖 **分系统的详细步骤、Ubuntu 准备工作、常见错误排查 →
+[INSTALL.md](INSTALL.md)**
+
+> **macOS 提示**:不要把项目放在 `~/Desktop` 或 `~/Documents` 下
+> ——iCloud 同步会导致 SQLite 文件锁随机失败。建议放在 `~/uniark-pro`。
 
 > 命令在 Linux(GNU tar)和 macOS(BSD tar)的 bash、zsh 下测试通过。
 > Windows 用户请在 WSL 或 Git Bash 中执行。
-
-### 强烈建议加装 akshare
-
-```bash
-pip install akshare
-```
-
-`requirements.txt` 默认**没有**列入 akshare,因为它依赖较重,且大多
-数情况下 yfinance 就够用。但实际经验是:
-
-- **新上市股**(尤其港股,例如 `0100.HK` MiniMax):yfinance 经常
-  只返 1 根 K 线,无法画图。akshare 走中文数据源(新浪/东财/腾讯),
-  能拉到全历史。
-- **A 股**:yfinance 对 A 股的数据质量参差,akshare 是更稳的备选。
-- **yfinance 偶尔反爬触发限频**:有 akshare 作为后备,体验更顺。
-
-`data.py` 已经实现了"主源不足 30 根 → 自动切到备源"的逻辑,装上
-akshare 后这条 fallback 链就活了。装不装是建议,不装也能跑(yfinance
-单源工作)。
 
 完整依赖:
 
 - `python-binance` —— Binance 加密货币数据
 - `yfinance` —— 美股 / A 股 / 港股 主数据源(Yahoo Finance)
-- `akshare` —— A 股 / 港股 / 美股 备数据源(强烈建议)
+- `akshare` —— A 股 / 港股 / 美股 备数据源
 - `pandas`、`numpy` —— 数据处理
 - `mplfinance`、`matplotlib` —— 图表渲染
 - `flask` —— Web UI(可选,仅 `app.py` 需要)
@@ -201,7 +192,7 @@ hk_stock  → data_yfinance → data_akshare
 .
 ├── README.md                  ← 本文件(Pro 版说明)
 ├── LICENSE                    ← MIT 许可证
-├── requirements.txt           ← Pro 版依赖(建议另装 akshare)
+├── requirements.txt           ← Pro 版依赖(含 akshare 备用数据源)
 ├── docs/
 │   └── tutorial/              ← 入门教程
 │       ├── 明明在涨_为什么系统提示卖.md
