@@ -148,7 +148,7 @@ import numpy as np
 #
 # 仅影响 find_missed_extremes；标准三段背离（find_three_segment_divergences）
 # 自己的 min_bars 参数与本常量互不影响、互不替代。
-MISSED_EXTREME_MIN_BARS = 4
+MISSED_EXTREME_MIN_BARS = 7
 
 
 # ─────────────────────────────────────────────────────────────────────────────
