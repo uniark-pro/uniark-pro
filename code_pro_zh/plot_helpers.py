@@ -52,34 +52,13 @@ ratio 只是当前快照而非判决。视觉上：
 """
 
 # 颜色：红=底背离（看涨反转），绿=顶背离（看跌反转）
-COLOR_BULLISH = '#ff3344'
-COLOR_BEARISH = '#22aa44'
-
-# Provisional 警示色：dodger blue。鲜亮、跟 MA99 浅青和 DIF 深青都拉得开，
-# 在白底面板上比之前的亮黄读得清楚。
-COLOR_PROVISIONAL = '#1e90ff'
-
-# 视觉参数（要再压扁/放大就改这里）
-MARKER_SIZE       = 80      # 三角形 scatter 的 size
-MARKER_EDGE       = 0.8     # 白色描边宽度（让箭头在 hist 柱上浮起来）
-LABEL_FONTSIZE    = 9
-
-# 偏移参数（相对 MACD 面板高度的百分比）
-OFFSET_MARKER_PCT = 0.05    # 箭头距 hist 极值柱的距离
-
-# 双三角的横向偏移（数据坐标 = K 线根数）。两个三角分别画在 x_mid ± 此值，
-# 形成两层叠加视觉。0.8 ≈ 一根 K 线宽，错开后两个三角清晰可辨、不互相遮挡。
-DOUBLE_MARKER_DX = 0.8
-
-# 文字搬到 0 轴对侧。两行从 0 轴向对侧依次延伸：
-TEXT_FIRST_PCT    = 0.08    # 第一行文字（紧邻 0 轴的那一行）距 0 轴的距离
-TEXT_SECOND_PCT   = 0.15    # 第二行文字距 0 轴的距离
-# 行序约定（无论顶/底背离）：
-#   "近 0 轴的一行" = Lv 标识（Lv1 留空）
-#   "远 0 轴的一行" = 百分比
-
-# Provisional 信号的百分比后缀
-PROVISIONAL_SUFFIX = ' ?'
+from config import (
+    COLOR_BULLISH, COLOR_BEARISH, COLOR_PROVISIONAL,
+    MARKER_SIZE, MARKER_EDGE, LABEL_FONTSIZE,
+    OFFSET_MARKER_PCT, DOUBLE_MARKER_DX,
+    TEXT_FIRST_PCT, TEXT_SECOND_PCT,
+    PROVISIONAL_SUFFIX,
+)
 
 
 def annotate_divergences(macd_ax, df, divergences):

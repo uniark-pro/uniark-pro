@@ -67,6 +67,12 @@ from indicator import add_indicators
 from divergence import find_three_segment_divergences, find_missed_extremes
 from plot_helpers import annotate_divergences, print_divergences
 from navigation import INTERVAL_MINUTES, compute_lookback_factor
+from config import (
+    MA_PERIODS, MA_COLORS,
+    ANCHOR_HIGHLIGHT_COLOR,
+    TOO_MUCH_DATA_THRESHOLD,
+    LOOKBACK_BARS,
+)
 import mplfinance as mpf
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -188,15 +194,6 @@ INTERVAL_CONFIG = {
 }
 
 
-MA_PERIODS = (7, 25, 99)
-MA_COLORS  = ('#ff9900', '#cc44ff', '#00aaff')
-
-# 锁定锚点高亮色:把 MA99 在锚点 S_last 时间窗内的子段染成红色,跟 MA99 原本
-# 的浅蓝 (#00aaff) 形成强对比,一眼能看出"这段时间是大周期上锚定的极值段"。
-ANCHOR_HIGHLIGHT_COLOR = '#e63946'
-
-TOO_MUCH_DATA_THRESHOLD = 600
-LOOKBACK_BARS = 200
 
 # 数据下界（按 market 分支）。fetch_start 不允许早于该日期。
 # crypto: binance 开市于 2017 年；DATA_FLOOR=2017-07-01 留几天缓冲

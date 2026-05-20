@@ -39,6 +39,7 @@ ImportError，提示用户该装哪个包。
 import importlib
 import sys
 import pandas as pd
+from config import MIN_BARS_FOR_PRIMARY
 
 # market → adapter 链（按尝试顺序）
 # 三个 stock market 都用 yfinance → akshare 串联
@@ -56,9 +57,6 @@ _SOURCE_NAME = {
     'data_akshare':  'akshare',
 }
 
-# fallback 阈值：主 adapter 返回少于这个行数就走备用
-# 30 根：MA99/MACD 都算不准的红线，明显是数据获取失败
-MIN_BARS_FOR_PRIMARY = 30
 
 # 已加载的子模块缓存：{module_name: module}
 _LOADED = {}

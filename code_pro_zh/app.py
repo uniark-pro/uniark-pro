@@ -39,9 +39,8 @@ sys.path.insert(0, _DIR)
 
 from plot_kline import render_chart, serialize_divergences
 from navigation import (NEXT_INTERVAL_BY_MARKET, INTERVAL_MINUTES,
-                        DIVERGENCE_DRILL_BARS_BEFORE,
-                        DIVERGENCE_DRILL_BARS_AFTER,
                         TRADING_HOURS_PER_DAY, INTRADAY_INTERVALS)
+from config import DIVERGENCE_DRILL_BARS_BEFORE, DIVERGENCE_DRILL_BARS_AFTER
 import settings
 from settings import MARKETS, ENTRY_INTERVALS_BY_MARKET, get_entry_intervals
 

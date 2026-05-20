@@ -37,6 +37,7 @@ yfinance 1h 原生支持,能往回拿 ~730 天数据。更小级别(30m/15m/5m)
 """
 import datetime as _dt
 import pandas as pd
+from config import DIVERGENCE_DRILL_BARS_BEFORE, DIVERGENCE_DRILL_BARS_AFTER
 
 
 # ── 周期金字塔（按 market 分支）─────────────────────────────────────
@@ -152,18 +153,6 @@ TOP_RANGES = [
 # 更窄的窗口让目标背离结构占据画面主体,不被前后大量无关的宏观结构淹没;
 # 同时数据量更小,对 yfinance 1h 的 730 天硬墙也更安全。
 #
-# AFTER 下限约束(MA99 染色覆盖需求)
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# peak_iso 是父级 K 线的 open_time,但 K 线物理覆盖 [open_time, open_time+
-# 一根父级 K 线时长)。同时 S_last 内 peak 之后可能还有几根 K 线没结束。
-# 要让子级别图能完整展示锁定的 S_last 时间段(MA99 红色染色到 s3_end 的
-# 物理右边界),AFTER 必须满足:
-#   AFTER × next_iv_min ≥ (s3_end - peak) + 1 个父级 K 线时长
-# 最坏情况:daily 父级 + 30m 子级、s3_end-peak ≈ 1 天 → 需求 AFTER ≥ 96。
-# 4h 父级 + 1h 子级 → 需求 AFTER ≥ 12。
-# AFTER=100 压住了 96 这条线(裕量 4 根),不可再往下调。
-DIVERGENCE_DRILL_BARS_BEFORE = 185
-DIVERGENCE_DRILL_BARS_AFTER  = 100
 
 
 # ── 主算法 ──────────────────────────────────────────────────────────
