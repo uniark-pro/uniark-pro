@@ -1,0 +1,5 @@
+users.json
+user_settings_*.json
+__pycache__/
+*.pyc
+*.pyo
