@@ -1,0 +1,64 @@
+{
+  "language": "zh",
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "FILUSDT",
+    "DOGEUSDT"
+  ],
+  "ranges": {
+    "weekly": [
+      {
+        "label": "2017-08 ~ 2020-05",
+        "start": "17 Aug, 2017",
+        "end": "30 May, 2020"
+      },
+      {
+        "label": "2020-03 ~ 2022-12",
+        "start": "17 Mar, 2020",
+        "end": "30 Dec, 2022"
+      },
+      {
+        "label": "2022-10 ~ 2025-10",
+        "start": "17 Oct, 2022",
+        "end": "30 Oct, 2025"
+      },
+      {
+        "label": "2025-03 ~ 2026-12",
+        "start": "17 Mar, 2025",
+        "end": "30 Dec, 2026"
+      }
+    ],
+    "3day": [
+      {
+        "label": "2017-08 ~ 2020-05",
+        "start": "17 Aug, 2017",
+        "end": "30 May, 2020"
+      },
+      {
+        "label": "2020-03 ~ 2022-12",
+        "start": "17 Mar, 2020",
+        "end": "30 Dec, 2022"
+      },
+      {
+        "label": "2022-10 ~ 2025-10",
+        "start": "17 Oct, 2022",
+        "end": "30 Oct, 2025"
+      },
+      {
+        "label": "2025-03 ~ 2026-12",
+        "start": "17 Mar, 2025",
+        "end": "30 Dec, 2026"
+      }
+    ],
+    "daily": [
+      {
+        "label": "2025-10 ~ 2026-12",
+        "start": "1 Oct, 2025",
+        "end": "30 Dec, 2026"
+      }
+    ]
+  }
+}
