@@ -357,6 +357,24 @@ HTML = r"""
                      margin-top: 4px; font-style: italic; }
     .div-empty { color: #8888aa; font-size: 0.85rem; padding: 4px 0; }
 
+    /* 周线背离卡片旁的"全景图"小按钮（仅在 top.interval=='weekly' 时出现） */
+    .div-card-row { display: flex; gap: 6px; align-items: stretch; }
+    .div-card-row .div-card { flex: 1; min-width: 0; }
+    .panorama-btn {
+      flex-shrink: 0; width: 52px;
+      background: #2a2a3e; border: 1px solid #44446a;
+      border-radius: 8px; cursor: pointer; user-select: none;
+      color: #f7a26a; transition: all 0.15s;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 3px; line-height: 1.2; padding: 4px; }
+    .panorama-btn:hover { border-color: #f7a26a; background: #3a3a5e; }
+    .panorama-btn.disabled {
+      color: #44446a; cursor: default; pointer-events: none;
+      opacity: 0.5; }
+    .panorama-btn .pano-icon { font-size: 1.1rem; }
+    .panorama-btn .pano-lbl  { font-size: 0.62rem; }
+
     #status-1, #status-2, #status-set { text-align: center; font-size: 0.85rem;
                             color: #8888aa; margin: 8px 0; min-height: 1.1em; }
     #status-1.ok, #status-2.ok, #status-set.ok    { color: #50fa7b; }
@@ -571,6 +589,8 @@ HTML = r"""
       div_bearish:      'Bearish',
       div_extreme:      'Extreme',
       div_provisional:  'Provisional — not yet closed, drill-down disabled',
+      panorama_label:   'Panorama',
+      panorama_tip:     'Generate all timeframes at once',
       iv: { '15m':'15m','30m':'30m','1h':'1h','4h':'4h',
             'daily':'Daily','3day':'3-Day','weekly':'Weekly' },
       mk: { 'crypto': 'Crypto',
@@ -624,6 +644,8 @@ HTML = r"""
       div_bearish:      '顶背离',
       div_extreme:      '极值',
       div_provisional:  '未完成 · 尚未封口,暂不可钻取',
+      panorama_label:   '全景图',
+      panorama_tip:     '一次性生成所有周期的K线图',
       iv: { '15m':'15分钟','30m':'30分钟','1h':'1小时','4h':'4小时',
             'daily':'日线','3day':'3日线','weekly':'周线' },
       mk: { 'crypto': '虚拟币',
@@ -1017,6 +1039,7 @@ HTML = r"""
       (n >= 5 ? ' cols3' : (n >= 3 ? ' cols2' : ''));
 
     grid.innerHTML = '';
+    const isWeekly = (top.interval === 'weekly');
     divs.forEach((d, idx) => {
       const isProv = !!d.provisional;
       const kindText = d.kind === 'bullish' ? tx.div_bullish : tx.div_bearish;
@@ -1044,8 +1067,49 @@ HTML = r"""
         el.onclick = () => drillWithAnchor(top.market, top.symbol, nextIv,
                                             divToAnchor(d, top.interval));
       }
-      grid.appendChild(el);
+
+      // 仅在周线视图，为每个背离卡片旁附加一个"全景图"按钮
+      if (isWeekly) {
+        const row = document.createElement('div');
+        row.className = 'div-card-row';
+        row.appendChild(el);
+
+        const panoBtn = document.createElement('div');
+        panoBtn.className = 'panorama-btn' + (isProv ? ' disabled' : '');
+        panoBtn.title = tx.panorama_tip;
+        panoBtn.innerHTML =
+          `<span class="pano-icon">🌐</span><span class="pano-lbl">${tx.panorama_label}</span>`;
+        if (!isProv) {
+          panoBtn.onclick = (ev) => {
+            ev.stopPropagation();
+            openPanorama(top.market, top.symbol, d);
+          };
+        }
+        row.appendChild(panoBtn);
+        grid.appendChild(row);
+      } else {
+        grid.appendChild(el);
+      }
     });
+  }
+
+  // 全景图：以周线背离锚点为起点，新 tab 打开 /panorama。
+  // 同时把当前周线图的实际窗口(stack[0].start/end)带过去 ——
+  // 后端用这两个时间精确复刻用户当前所见的周线图，避免重拉全量数据。
+  function openPanorama(market, symbol, d) {
+    if (!d || !d.peak_iso) return;
+    const top = stack[stack.length - 1];  // 必然在周线视图，stack[-1] === stack[0]
+    const params = new URLSearchParams({
+      market:       market,
+      symbol:       symbol,
+      peak_iso:     d.peak_iso,
+      s3_start_iso: d.s3_start_iso || '',
+      s3_end_iso:   d.s3_end_iso || '',
+      kind:         d.kind || 'bullish',
+      weekly_start: top && top.start ? top.start : '',
+      weekly_end:   top && top.end ? top.end : '',
+    });
+    window.open('/panorama?' + params.toString(), '_blank');
   }
 
   // 通用钻取入口:启动锁定链 / 沿锁定链继续都走这里
@@ -1614,6 +1678,10 @@ def post_settings():
         return jsonify({'ok': False, 'error': f'save failed: {e}'})
 
     return jsonify({'ok': True, 'settings': new_settings})
+
+
+from panorama import register_panorama_routes
+register_panorama_routes(app)
 
 
 if __name__ == '__main__':
