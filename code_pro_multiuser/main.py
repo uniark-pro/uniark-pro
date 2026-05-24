@@ -737,7 +737,13 @@ def _drill_with_anchor(market, symbol, next_iv, anchor):
     一旦传入,就被 render_and_push 存进新栈帧的 locked_anchor 字段。
     """
     peak_ts = _dt.datetime.fromisoformat(anchor['peak_iso'])
-    win_start, win_end = compute_divergence_drill_window(peak_ts, next_iv, market)
+    # 透传 S3 信息 → 启用自适应扩展窗口，让低级别图尽量罩住父级 S3 投影区
+    win_start, win_end = compute_divergence_drill_window(
+        peak_ts, next_iv, market,
+        s3_start_iso=anchor.get('s3_start_iso'),
+        s3_end_iso=anchor.get('s3_end_iso'),
+        parent_iv=anchor.get('parent_interval'),
+    )
     render_and_push(market, symbol, next_iv, win_start, win_end,
                     locked_anchor=anchor)
 

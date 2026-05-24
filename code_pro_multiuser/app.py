@@ -1039,7 +1039,9 @@ HTML = r"""
       (n >= 5 ? ' cols3' : (n >= 3 ? ' cols2' : ''));
 
     grid.innerHTML = '';
-    const isWeekly = (top.interval === 'weekly');
+    // 全景图入口：周线 / 3日线 / 日线视图均可点击，从该级别向下钻取全部周期
+    const PANORAMA_TOP_LEVELS = ['weekly', '3day', 'daily'];
+    const showPanorama = PANORAMA_TOP_LEVELS.includes(top.interval);
     divs.forEach((d, idx) => {
       const isProv = !!d.provisional;
       const kindText = d.kind === 'bullish' ? tx.div_bullish : tx.div_bearish;
@@ -1068,23 +1070,22 @@ HTML = r"""
                                             divToAnchor(d, top.interval));
       }
 
-      // 仅在周线视图，为每个背离卡片旁附加一个"全景图"按钮
-      if (isWeekly) {
+      // 周线 / 3日线 / 日线视图，且非 provisional 背离，附加全景图按钮
+      // provisional 不显示按钮（与现有钻取行为一致：未封口 = 不可操作）
+      if (showPanorama && !isProv) {
         const row = document.createElement('div');
         row.className = 'div-card-row';
         row.appendChild(el);
 
         const panoBtn = document.createElement('div');
-        panoBtn.className = 'panorama-btn' + (isProv ? ' disabled' : '');
+        panoBtn.className = 'panorama-btn';
         panoBtn.title = tx.panorama_tip;
         panoBtn.innerHTML =
           `<span class="pano-icon">🌐</span><span class="pano-lbl">${tx.panorama_label}</span>`;
-        if (!isProv) {
-          panoBtn.onclick = (ev) => {
-            ev.stopPropagation();
-            openPanorama(top.market, top.symbol, d);
-          };
-        }
+        panoBtn.onclick = (ev) => {
+          ev.stopPropagation();
+          openPanorama(top.market, top.symbol, d, top.interval);
+        };
         row.appendChild(panoBtn);
         grid.appendChild(row);
       } else {
@@ -1093,12 +1094,14 @@ HTML = r"""
     });
   }
 
-  // 全景图：以周线背离锚点为起点，新 tab 打开 /panorama。
-  // 同时把当前周线图的实际窗口(stack[0].start/end)带过去 ——
-  // 后端用这两个时间精确复刻用户当前所见的周线图，避免重拉全量数据。
-  function openPanorama(market, symbol, d) {
+  // 全景图：以当前周期(top.interval)某条背离为起点，新 tab 打开 /panorama。
+  // 同时把当前顶层图的实际窗口(stack[0].start/end)带过去 ——
+  // 后端用这两个时间精确复刻用户当前所见的顶层图，避免重拉全量数据。
+  // 注意：能进入全景图入口时 stack 一定只有顶层一项（周线/3日线/日线初始视图），
+  // stack[stack.length-1] 即顶层项。
+  function openPanorama(market, symbol, d, topInterval) {
     if (!d || !d.peak_iso) return;
-    const top = stack[stack.length - 1];  // 必然在周线视图，stack[-1] === stack[0]
+    const topItem = stack[stack.length - 1];
     const params = new URLSearchParams({
       market:       market,
       symbol:       symbol,
@@ -1106,8 +1109,9 @@ HTML = r"""
       s3_start_iso: d.s3_start_iso || '',
       s3_end_iso:   d.s3_end_iso || '',
       kind:         d.kind || 'bullish',
-      weekly_start: top && top.start ? top.start : '',
-      weekly_end:   top && top.end ? top.end : '',
+      top_interval: topInterval,
+      top_start:    topItem && topItem.start ? topItem.start : '',
+      top_end:      topItem && topItem.end ? topItem.end : '',
     });
     window.open('/panorama?' + params.toString(), '_blank');
   }

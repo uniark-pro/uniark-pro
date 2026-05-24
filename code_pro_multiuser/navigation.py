@@ -42,11 +42,11 @@ from config import DIVERGENCE_DRILL_BARS_BEFORE, DIVERGENCE_DRILL_BARS_AFTER
 
 # ── 周期金字塔（按 market 分支）─────────────────────────────────────
 # 三个 stock market（美股/A股/港股）共用同一套钻取链。
-# weekly 仍直接下钻到 daily（保持既有行为不变）；3day 作为入口周期时
-# 下钻到 daily，再到 1h。3day 自身由 adapter 用 daily 重采样合成。
+# weekly 下钻到 3day，3day 下钻到 daily，daily 下钻到 1h。
+# 3day 自身由 adapter 用 daily 重采样合成（akshare / yfinance 均已实现）。
 _STOCK_CHAIN = {
-    'weekly': 'daily',
-    '3day':   'daily',      # 3day 入口的钻取：下钻到 daily
+    'weekly': '3day',       # 周线下钻到 3 日线
+    '3day':   'daily',      # 3 日线下钻到日线
     'daily':  '1h',         # 钻取末端：从 daily 进一步钻到小时级
     '1h':     None,         # yfinance 1h 有 730 天窗口硬墙；更小级别不开放
 }

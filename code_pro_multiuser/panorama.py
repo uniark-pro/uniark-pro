@@ -29,7 +29,6 @@ app.py 末尾调用：
 import os
 import sys
 import datetime as _dt
-from typing import Optional
 
 import pandas as pd
 
@@ -93,29 +92,25 @@ def _tf_chain(market: str, top_interval: str) -> list[str]:
 
 def _render_one_tile(market: str, symbol: str, interval: str,
                      anchor: dict, idx_in_chain: int,
-                     weekly_start_iso: Optional[str] = None,
-                     weekly_end_iso: Optional[str] = None) -> dict:
+                     top_start_iso: str | None = None,
+                     top_end_iso: str | None = None) -> dict:
     """
     渲染单张周期图。完全无状态：所有上下文都从入参导出。
 
     Parameters
     ----------
-    interval : 当前要渲染的周期
-    anchor   : 周线 anchor（钻取链共享）
-    idx_in_chain : 在周期链中的位置（0 = 周线层）；决定是否传 locked_anchor
-    weekly_start_iso, weekly_end_iso : 仅 idx_in_chain == 0 时使用
-
-    Returns
-    -------
-    dict {interval, iv_label, title_range, img_b64, bars,
-          actual_start, actual_end, error}
+    interval     : 当前要渲染的周期
+    anchor       : 顶层 anchor（钻取链共享，整条链都用它计算窗口）
+    idx_in_chain : 在周期链中的位置（0 = 顶层）；决定是否传 locked_anchor
+    top_start_iso, top_end_iso : 仅 idx_in_chain == 0 时使用，
+        用来精确复刻"用户主界面看到的顶层图"。
     """
     # 决定时间窗
     if idx_in_chain == 0:
-        if weekly_start_iso and weekly_end_iso:
+        if top_start_iso and top_end_iso:
             try:
-                start_str = to_binance_str(_to_ts(weekly_start_iso))
-                end_str   = to_binance_str(_to_ts(weekly_end_iso))
+                start_str = to_binance_str(_to_ts(top_start_iso))
+                end_str   = to_binance_str(_to_ts(top_end_iso))
             except Exception:
                 start_str, end_str = None, None
         else:
@@ -184,18 +179,30 @@ def _render_one_tile(market: str, symbol: str, interval: str,
 # 首屏构建：仅渲染前 N 张图，剩余周期返回占位
 # ═══════════════════════════════════════════════════════════════════════════
 
-def build_eager(market: str, symbol: str, weekly_anchor: dict,
-                weekly_start_iso: Optional[str] = None,
-                weekly_end_iso: Optional[str] = None,
+def build_eager(market: str, symbol: str, top_anchor: dict,
+                top_interval: str = 'weekly',
+                top_start_iso: str | None = None,
+                top_end_iso: str | None = None,
                 eager_count: int = 2) -> list[dict]:
     """
     首屏渲染：周期链前 eager_count 张图立即生成，
     其余周期返回 {'pending': True} 占位条目（前端用 IntersectionObserver
     按需调用 /panorama/tile）。
-    """
-    chain = _tf_chain(market, 'weekly')
 
-    anchor = weekly_anchor.copy()
+    Parameters
+    ----------
+    top_interval : 顶层周期。常用值：
+        - 'weekly' → 周线全景 (crypto 7 张 / stock 3 张)
+        - '3day'   → 3日线全景 (crypto 6 张)
+        - 'daily'  → 日线全景 (crypto 5 张 / stock 2 张)
+    top_anchor   : 该顶层周期某个背离的完整 anchor 信息（含 peak_iso 等）。
+                   整条钻取链共享此 anchor —— 子级窗口都以 top peak 为中心。
+    top_start_iso, top_end_iso : 顶层周期当前的实际时间窗（来自主界面 stack[0]），
+        让 panorama 顶层图与用户主界面所见完全一致。
+    """
+    chain = _tf_chain(market, top_interval)
+
+    anchor = top_anchor.copy()
     anchor.setdefault('kind', 'bullish')
 
     results: list[dict] = []
@@ -203,7 +210,7 @@ def build_eager(market: str, symbol: str, weekly_anchor: dict,
         if idx < eager_count:
             results.append(_render_one_tile(
                 market, symbol, iv, anchor, idx,
-                weekly_start_iso, weekly_end_iso,
+                top_start_iso, top_end_iso,
             ))
         else:
             # 占位：前端按需触发渲染
@@ -227,15 +234,17 @@ def build_eager(market: str, symbol: str, weekly_anchor: dict,
 # ═══════════════════════════════════════════════════════════════════════════
 
 def render_tile(market: str, symbol: str, interval: str,
-                weekly_anchor: dict,
-                weekly_start_iso: Optional[str] = None,
-                weekly_end_iso: Optional[str] = None) -> dict:
+                top_anchor: dict,
+                top_interval: str = 'weekly',
+                top_start_iso: str | None = None,
+                top_end_iso: str | None = None) -> dict:
     """
     按需渲染单张图（无状态，供 /panorama/tile JSON 端点调用）。
 
-    interval 必须在该 market 的周期链内；不在则返回 error 条目。
+    interval 必须在该 market 从 top_interval 开始的周期链内；
+    不在则返回 error 条目。
     """
-    chain = _tf_chain(market, 'weekly')
+    chain = _tf_chain(market, top_interval)
     if interval not in chain:
         return {
             'interval':     interval,
@@ -245,16 +254,16 @@ def render_tile(market: str, symbol: str, interval: str,
             'bars':         0,
             'actual_start': None,
             'actual_end':   None,
-            'error':        f'interval {interval!r} 不在 {market!r} 周期链中',
+            'error':        f'interval {interval!r} 不在 {market!r} 从 {top_interval!r} 起的周期链中',
         }
     idx = chain.index(interval)
 
-    anchor = weekly_anchor.copy()
+    anchor = top_anchor.copy()
     anchor.setdefault('kind', 'bullish')
 
     return _render_one_tile(
         market, symbol, interval, anchor, idx,
-        weekly_start_iso, weekly_end_iso,
+        top_start_iso, top_end_iso,
     )
 
 
@@ -370,7 +379,7 @@ body{background:#1e1e2e;color:#e0e0f0;
 <div class="hdr">
   <div class="hdr-title">🌐 {{ symbol_short }} 全景图</div>
   <div class="hdr-sub">
-    {{ mk_label }} · 信号源：<strong>周线</strong>
+    {{ mk_label }} · 信号源：<strong>{{ top_iv_label }}</strong>
     <span class="{{ 'hdr-kind-bull' if anchor_kind=='bullish' else 'hdr-kind-bear' }}">
       {{ '▲ 底背离' if anchor_kind=='bullish' else '▼ 顶背离' }}
     </span>
@@ -446,7 +455,7 @@ body{background:#1e1e2e;color:#e0e0f0;
   const TILE_URL = '/panorama/tile';
   const MAX_CONCURRENT = 2;
 
-  // 从 hdr 信息卡里复用全景参数（嵌入到 dataset 里）
+  // 从 hdr 信息卡里复用全景参数
   const CTX = {
     market:       {{ ctx_market | tojson }},
     symbol:       {{ ctx_symbol | tojson }},
@@ -454,8 +463,9 @@ body{background:#1e1e2e;color:#e0e0f0;
     s3_start_iso: {{ ctx_s3_start_iso | tojson }},
     s3_end_iso:   {{ ctx_s3_end_iso | tojson }},
     kind:         {{ ctx_kind | tojson }},
-    weekly_start: {{ ctx_weekly_start | tojson }},
-    weekly_end:   {{ ctx_weekly_end | tojson }},
+    top_interval: {{ ctx_top_interval | tojson }},
+    top_start:    {{ ctx_top_start | tojson }},
+    top_end:      {{ ctx_top_end | tojson }},
   };
 
   let active = 0;
@@ -483,8 +493,9 @@ body{background:#1e1e2e;color:#e0e0f0;
       s3_start_iso: CTX.s3_start_iso,
       s3_end_iso:   CTX.s3_end_iso,
       kind:         CTX.kind,
-      weekly_start: CTX.weekly_start,
-      weekly_end:   CTX.weekly_end,
+      top_interval: CTX.top_interval,
+      top_start:    CTX.top_start,
+      top_end:      CTX.top_end,
     });
 
     return fetch(TILE_URL + '?' + params.toString())
@@ -590,27 +601,40 @@ def register_panorama_routes(app):
         s3_start_iso = request.args.get('s3_start_iso', '')
         s3_end_iso   = request.args.get('s3_end_iso', '')
         kind         = request.args.get('kind', 'bullish')
-        # 前端 stack[0] 里保存的当前周线图实际窗口（ISO 格式）
-        weekly_start = request.args.get('weekly_start', '')
-        weekly_end   = request.args.get('weekly_end', '')
+        # 顶层周期：从哪一级开始向下钻取。默认 'weekly' 保证旧 URL 仍能工作。
+        top_interval = request.args.get('top_interval', 'weekly')
+        # 顶层周期当前的实际时间窗（来自前端 stack[0]，ISO 格式）
+        top_start    = request.args.get('top_start', '')
+        top_end      = request.args.get('top_end', '')
 
         if not symbol or not peak_iso:
             return ('<p style="color:#e0e0f0;padding:2rem;font-family:sans-serif">'
-                    '参数缺失，请从主界面的周线图重新点击全景图按钮。</p>'), 400
+                    '参数缺失，请从主界面的 K 线图重新点击全景图按钮。</p>'), 400
 
-        weekly_anchor = {
+        # 校验 top_interval 在该 market 里被支持。
+        # 注意 stock 的周期链是 weekly→daily→1h，3day 不在 weekly 链上，但
+        # 它是独立的钻取入口（_STOCK_CHAIN 里有 '3day' 键）。所以不能简单地
+        # 用 "在 weekly 链里" 来校验。这里直接看 NEXT_INTERVAL_BY_MARKET 是否
+        # 有该 market 的该周期键。
+        from navigation import NEXT_INTERVAL_BY_MARKET as _NEXT_MAP
+        if top_interval not in _NEXT_MAP.get(market, {}):
+            return (f'<p style="color:#e0e0f0;padding:2rem;font-family:sans-serif">'
+                    f'无效的顶层周期：{top_interval}（market={market}）</p>'), 400
+
+        top_anchor = {
             'peak_iso':        peak_iso,
             's3_start_iso':    s3_start_iso or None,
             's3_end_iso':      s3_end_iso or None,
             'kind':            kind,
-            'parent_interval': 'weekly',
+            'parent_interval': top_interval,
         }
 
         tf_results = build_eager(
-            market, symbol, weekly_anchor,
-            weekly_start_iso=weekly_start or None,
-            weekly_end_iso=weekly_end or None,
-            eager_count=2,   # 首屏：周线 + 第一张子级
+            market, symbol, top_anchor,
+            top_interval=top_interval,
+            top_start_iso=top_start or None,
+            top_end_iso=top_end or None,
+            eager_count=2,   # 首屏：顶层 + 第一张子级
         )
 
         # 极值时间显示
@@ -619,13 +643,15 @@ def register_panorama_routes(app):
         except Exception:
             anchor_peak_date = peak_iso
 
-        chain = _tf_chain(market, 'weekly')
+        chain = _tf_chain(market, top_interval)
 
         ctx = dict(
             symbol_short     = _short_sym(market, symbol),
             mk_label         = MK_LABEL.get(market, market),
             anchor_kind      = kind,
             anchor_peak_date = anchor_peak_date,
+            # 顶层周期的中文名（用于"信号源：xxx"显示）
+            top_iv_label     = IV_LABEL.get(top_interval, top_interval),
             chain            = chain,
             IV_LABEL         = IV_LABEL,
             tf_results       = tf_results,
@@ -637,8 +663,9 @@ def register_panorama_routes(app):
             ctx_s3_start_iso = s3_start_iso,
             ctx_s3_end_iso   = s3_end_iso,
             ctx_kind         = kind,
-            ctx_weekly_start = weekly_start,
-            ctx_weekly_end   = weekly_end,
+            ctx_top_interval = top_interval,
+            ctx_top_start    = top_start,
+            ctx_top_end      = top_end,
         )
         return render_template_string(PANORAMA_HTML, **ctx)
 
@@ -657,24 +684,26 @@ def register_panorama_routes(app):
         s3_start_iso = request.args.get('s3_start_iso', '')
         s3_end_iso   = request.args.get('s3_end_iso', '')
         kind         = request.args.get('kind', 'bullish')
-        weekly_start = request.args.get('weekly_start', '')
-        weekly_end   = request.args.get('weekly_end', '')
+        top_interval = request.args.get('top_interval', 'weekly')
+        top_start    = request.args.get('top_start', '')
+        top_end      = request.args.get('top_end', '')
 
         if not symbol or not peak_iso or not interval:
             return jsonify({'ok': False, 'error': '缺少必要参数'}), 400
 
-        weekly_anchor = {
+        top_anchor = {
             'peak_iso':        peak_iso,
             's3_start_iso':    s3_start_iso or None,
             's3_end_iso':      s3_end_iso or None,
             'kind':            kind,
-            'parent_interval': 'weekly',
+            'parent_interval': top_interval,
         }
 
         result = render_tile(
-            market, symbol, interval, weekly_anchor,
-            weekly_start_iso=weekly_start or None,
-            weekly_end_iso=weekly_end or None,
+            market, symbol, interval, top_anchor,
+            top_interval=top_interval,
+            top_start_iso=top_start or None,
+            top_end_iso=top_end or None,
         )
         if result.get('error'):
             return jsonify({'ok': False, 'error': result['error']}), 500
