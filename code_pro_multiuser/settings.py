@@ -349,7 +349,8 @@ def _build_market_block(raw, market):
 def load_settings():
     """
     读取设置。文件缺失或损坏时返回默认值，不抛异常。
-    自动处理 v1→v3、v2→v3 迁移。
+    自动处理 v1→v4、v2→v4、v3→v4 迁移(symbols 字符串数组自动包成
+    {ticker, cn_name} dict,cn_name 从 plot_kline 内置表查)。
     """
     if not os.path.exists(SETTINGS_FILE):
         return _defaults()

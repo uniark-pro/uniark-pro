@@ -120,6 +120,9 @@ def _render_one_tile(market: str, symbol: str, interval: str,
             win_s, win_e = compute_divergence_drill_window(
                 _to_ts(anchor['peak_iso']),
                 interval, market,
+                s3_start_iso=anchor.get('s3_start_iso'),
+                s3_end_iso=anchor.get('s3_end_iso'),
+                parent_iv=anchor.get('parent_interval'),
             )
             start_str = to_binance_str(win_s)
             end_str   = to_binance_str(win_e)

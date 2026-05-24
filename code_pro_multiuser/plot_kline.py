@@ -6,10 +6,13 @@ K线绘图 - 多 market + 多币种 + 多周期统一入口
 
 market 维度
 -----------
-新增 'crypto' | 'stock' 维度。CLI 第一个参数即为 market。
-- crypto：沿用 binance 数据源，title 含 'USDT' 后缀，DATA_FLOOR=2017-07-01
-- stock ：走 yfinance 数据源（auto_adjust 复权），title 不带 USDT，
-          DATA_FLOOR 放在 1970-01-01（远早于任何能拿到的美股历史）
+四个 market：'crypto' | 'us_stock' | 'cn_stock' | 'hk_stock'。
+CLI 第一个参数即为 market。
+- crypto：binance 数据源，title 含 'USDT' 后缀，DATA_FLOOR=2017-07-01
+- us_stock / cn_stock / hk_stock：
+    主源 yfinance(auto_adjust 复权) → 备用 akshare(qfq 前复权)，
+    路由由 data.py 负责。title 不带 USDT，DATA_FLOOR 按 market 分别设定
+    (us_stock/hk_stock = 1970-01-01, cn_stock = 1990-01-01 上交所成立年)。
 
 币种白名单语义：
   SYMBOL_CONFIG_BY_MARKET 不再是"允许币种白名单"，只是"显式覆盖配置"。

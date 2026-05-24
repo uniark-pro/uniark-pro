@@ -2,8 +2,9 @@
 K 线分析 - Web App（含设置面板，多 market 版）
 ================================================
 入口：选 market → 选标的 → 选入口周期 → 选时段 → 看图
-钻取：根据当前图的 K 线根数动态计算段数 = floor(N_next/385)+1
-后端 /generate 返回图、实际窗口、根数。
+钻取：基于当前图检出的背离信号,点卡片用 peak_iso 锚定下一级窗口
+      (peak ± BEFORE/AFTER 根次级 K 线,可按父级 S3 投影自适应扩展)。
+后端 /generate 返回图、实际窗口、根数、背离列表。
 
 market：
   顶部条加了一个 market toggle（虚拟币/美股/A股/港股）。切换会重置 symbol/range
@@ -12,11 +13,11 @@ market：
 
 入口周期（按 market）：
   - crypto                          : weekly / 3day / daily
-  - us_stock / cn_stock / hk_stock  : weekly / daily
+  - us_stock / cn_stock / hk_stock  : weekly / 3day / daily
 
 钻取金字塔（按 market）：
   - crypto                          : weekly→3day→daily→4h→1h→30m→15m
-  - us_stock / cn_stock / hk_stock  : weekly→daily→1h→(终止)
+  - us_stock / cn_stock / hk_stock  : weekly→3day→daily→1h→(终止)
 
 设置：
   顶栏 ⚙ 按钮打开设置视图。设置里有 market tab，下面的 symbols 和
@@ -1585,14 +1586,17 @@ def get_settings():
 @app.route('/settings', methods=['POST'])
 def post_settings():
     """
-    校验并保存设置。请求体（v2 双 market）：
+    校验并保存设置。请求体（v4 四 market + 标的中文名）：
         {
           language: 'en'|'zh',
-          market:   'crypto'|'stock',
-          crypto:   { symbols: [...], ranges: { weekly:[...], 3day:[...], daily:[...] } },
-          stock:    { symbols: [...], ranges: { weekly:[...], daily:[...] } }
+          market:   'crypto'|'us_stock'|'cn_stock'|'hk_stock',
+          crypto:   { symbols: [{ticker, cn_name}, ...],
+                      ranges:  { weekly:[...], 3day:[...], daily:[...] } },
+          us_stock: { 同上结构 },
+          cn_stock: { 同上结构 },
+          hk_stock: { 同上结构 }
         }
-    任一字段不合法则整体拒绝。
+    symbols 也兼容 v3 字符串数组(自动包成 dict)。任一字段不合法则整体拒绝。
     """
     data = request.get_json() or {}
 
