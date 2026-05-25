@@ -100,9 +100,9 @@ SYMBOL_CONFIG_BY_MARKET = {
     'us_stock': {
         'MU':   {'short': 'MU',   'cn_name': '美光'},
         'NVDA': {'short': 'NVDA', 'cn_name': '英伟达'},
-        'AAPL': {'short': 'AAPL', 'cn_name': '苹果'},
         'TSLA': {'short': 'TSLA', 'cn_name': '特斯拉'},
-        'MSFT': {'short': 'MSFT', 'cn_name': '微软'},
+        'AAPL': {'short': 'GC=F', 'cn_name': '黄金'},
+        'MSFT': {'short': 'SI=F', 'cn_name': '白银'},
     },
     'cn_stock': {
         # short 去掉 .SS / .SZ 后缀（图表/文件名更短），cn_name 是中文简称
