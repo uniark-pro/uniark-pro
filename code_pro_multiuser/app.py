@@ -446,6 +446,8 @@ HTML = r"""
     <h1 id="title">📈 K-Line Generator</h1>
     <div class="top-right">
       <div class="user-badge">👤 <span>{{ username }}</span></div>
+      <a class="logout-btn" href="/scanner"
+         style="border-color:#7c6ef0;color:#a48af8;">📡 扫描</a>
       <a class="logout-btn" href="/logout">退出</a>
       <div class="settings-btn" id="btn-settings"
            title="Settings" onclick="openSettings()">⚙</div>
@@ -1690,6 +1692,9 @@ def post_settings():
 
 from panorama import register_panorama_routes
 register_panorama_routes(app)
+
+from scanner import register_scanner_routes
+register_scanner_routes(app)
 
 
 if __name__ == '__main__':
