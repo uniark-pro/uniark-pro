@@ -30,6 +30,7 @@ import pandas as pd
 import data as _data
 import indicator as _ind
 from divergence import find_three_segment_divergences, find_missed_extremes
+from config import SCANNER_DEFAULT_START
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -415,7 +416,7 @@ tr.hidden{display:none;}
 
   <div class="field">
     <label>起始时间（YYYY-MM）</label>
-    <input type="text" id="start-str" value="2025-04" placeholder="2025-04">
+    <input type="text" id="start-str" value="__DEFAULT_START__" placeholder="2025-04">
   </div>
 
   <div class="field">
@@ -707,7 +708,7 @@ def register_scanner_routes(app):
     def scanner_page():
         if 'username' not in session:
             return redirect(url_for('login'))
-        return SCANNER_HTML
+        return SCANNER_HTML.replace('__DEFAULT_START__', SCANNER_DEFAULT_START)
 
     # ── /scanner/chart：直接渲染 K 线图 ──────────────────────────────────
     @app.route('/scanner/chart')
@@ -767,7 +768,7 @@ def register_scanner_routes(app):
 
         kind      = request.args.get('kind',        'bullish')
         interval  = request.args.get('interval',    '3day')
-        start_str = request.args.get('start',       '2025-01')
+        start_str = request.args.get('start', SCANNER_DEFAULT_START)
         end_str   = request.args.get('end',         '') or None
         max_level = int(request.args.get('max_level', 2))
         ratio_thr = float(request.args.get('ratio_thr', 0.5))
