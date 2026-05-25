@@ -13,3 +13,8 @@ flask>=2.3.0
 # 系列即可，功能完整且更稳定（1.x 在 2025-2026 持续退化）。
 yfinance>=0.2.40
 akshare>=1.14.0
+# Hyperliquid 数据源：HYPE / PURR 等 HL 原生币不在 binance 现货，
+# data_hyperliquid.py 走 https://api.hyperliquid.xyz/info 直接拉 candleSnapshot。
+# 只用到 POST/JSON，requests 已是 yfinance/akshare 的间接依赖，
+# 写明确版本是为了让缺失时能直接定位（而非埋在 yfinance 安装失败的报错里）。
+requests>=2.28.0
