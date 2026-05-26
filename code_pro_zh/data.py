@@ -19,7 +19,10 @@ DataFrame.attrs['source'] 记录实际使用的数据源（'yfinance' / 'akshare
 数据源策略
 ----------
 crypto:
-    binance（无 fallback，币圈只有这个数据源）
+    主：binance
+    备：hyperliquid
+    触发条件：binance 抛 BinanceAPIException（Invalid symbol，例如 HYPEUSDT
+    不在 binance 现货）或返回 < MIN_BARS_FOR_PRIMARY 行 → fallback 到 HL
 
 stock (us_stock / cn_stock / hk_stock):
     主：yfinance
@@ -27,9 +30,13 @@ stock (us_stock / cn_stock / hk_stock):
     触发条件：yfinance 返回 < MIN_BARS_FOR_PRIMARY 行 → 自动 fallback 到 akshare
 
 为什么需要 fallback：
-yfinance 1.3.0 在 2025-2026 年持续退化（Yahoo 端反爬升级、新上市股拉不到
-历史等）。具体复现：0100.HK MiniMax 用 yfinance 只返 1 行，akshare 拉
-全历史无问题。akshare 走中文数据源（新浪/东财/腾讯），跟 Yahoo 完全独立。
+- crypto 端：HYPE / PURR 等 Hyperliquid 原生币现货不在 binance 上市，
+  python-binance 拉不到。Hyperliquid 自家 info API 提供官方 candleSnapshot，
+  是这些币最权威的数据源；BTC / ETH / SOL 等仍由 binance 直接命中。
+- stock 端：yfinance 1.3.0 在 2025-2026 持续退化（Yahoo 端反爬升级、新
+  上市股拉不到历史等）。具体复现：0100.HK MiniMax 用 yfinance 只返 1 行，
+  akshare 拉全历史无问题。akshare 走中文数据源（新浪/东财/腾讯），跟
+  Yahoo 完全独立。
 
 懒加载
 ------
@@ -42,19 +49,23 @@ import pandas as pd
 from config import MIN_BARS_FOR_PRIMARY
 
 # market → adapter 链（按尝试顺序）
-# 三个 stock market 都用 yfinance → akshare 串联
+# crypto:  binance 主源 → hyperliquid 备用（HYPE/PURR 等 HL 原生币 binance 拉不到）
+# stock 三类：yfinance → akshare 串联
 _ROUTERS = {
-    'crypto':   ['data_binance'],
+    'crypto':   ['data_binance', 'data_hyperliquid'],
     'us_stock': ['data_yfinance', 'data_akshare'],
     'cn_stock': ['data_yfinance', 'data_akshare'],
     'hk_stock': ['data_yfinance', 'data_akshare'],
 }
 
 # 数据源短名映射（用于 df.attrs['source']）
+# 主源 binance / yfinance 由 plot_kline._make_title 视为默认，不挂"· source: xxx"标记；
+# 走到 hyperliquid / akshare 才在图标题尾部挂标记，告知用户这次是 fallback 路径。
 _SOURCE_NAME = {
-    'data_binance':  'binance',
-    'data_yfinance': 'yfinance',
-    'data_akshare':  'akshare',
+    'data_binance':      'binance',
+    'data_hyperliquid':  'hyperliquid',
+    'data_yfinance':     'yfinance',
+    'data_akshare':      'akshare',
 }
 
 

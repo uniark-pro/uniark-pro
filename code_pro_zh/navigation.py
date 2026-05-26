@@ -37,16 +37,20 @@ yfinance 1h 原生支持,能往回拿 ~730 天数据。更小级别(30m/15m/5m)
 """
 import datetime as _dt
 import pandas as pd
-from config import DIVERGENCE_DRILL_BARS_BEFORE, DIVERGENCE_DRILL_BARS_AFTER
+from config import (
+    DIVERGENCE_DRILL_BARS_BEFORE,
+    DIVERGENCE_DRILL_BARS_AFTER,
+    DIVERGENCE_DRILL_BARS_MAX,
+)
 
 
 # ── 周期金字塔（按 market 分支）─────────────────────────────────────
 # 三个 stock market（美股/A股/港股）共用同一套钻取链。
-# weekly 仍直接下钻到 daily（保持既有行为不变）；3day 作为入口周期时
-# 下钻到 daily，再到 1h。3day 自身由 adapter 用 daily 重采样合成。
+# weekly 下钻到 3day，3day 下钻到 daily，daily 下钻到 1h。
+# 3day 自身由 adapter 用 daily 重采样合成（akshare / yfinance 均已实现）。
 _STOCK_CHAIN = {
-    'weekly': 'daily',
-    '3day':   'daily',      # 3day 入口的钻取：下钻到 daily
+    'weekly': '3day',       # 周线下钻到 3 日线
+    '3day':   'daily',      # 3 日线下钻到日线
     'daily':  '1h',         # 钻取末端：从 daily 进一步钻到小时级
     '1h':     None,         # yfinance 1h 有 730 天窗口硬墙；更小级别不开放
 }
@@ -121,7 +125,8 @@ def compute_lookback_factor(market, interval):
       - plot_kline._compute_fetch_start: 放大 LOOKBACK_BARS 的物理跨度，
         让 MA99/MACD 在 start_str 处稳定
       - navigation.compute_divergence_drill_window: 放大背离钻取的
-        BEFORE / AFTER 窗口，让钻取后图上能看到完整 585 根次级 K 线
+        BEFORE / AFTER 窗口，让钻取后图上能看到完整 286 根次级 K 线
+        （BEFORE=185 + 1 + AFTER=100；可通过 s3 投影自适应扩展到 MAX=800）
     """
     if market == 'crypto':
         return 1.0
@@ -168,21 +173,50 @@ def has_drilldown(interval, market='crypto'):
     return next_interval(interval, market) is not None
 
 
-def compute_divergence_drill_window(peak_ts, next_iv, market='crypto'):
+def compute_divergence_drill_window(peak_ts, next_iv, market='crypto',
+                                    s3_start_iso=None, s3_end_iso=None,
+                                    parent_iv=None):
     """
     给定背离极值时间 + 目标钻取周期,计算钻取窗口的起止时间。
+
+    基础规则
+    --------
+    默认窗口 = peak_ts ± (BEFORE, AFTER) × 一根子级 K 线物理时长。
+    交易日因子由 compute_lookback_factor 给出 —— stock intraday 会按
+    交易小时数放大,保证 N 根 K 线对应的日历跨度足够。
+
+    自适应扩展(可选)
+    -----------------
+    若提供 s3_start_iso / s3_end_iso(父级 S_last 段两端 open_time),
+    窗口将自动外扩去包住整个 S3 在子级别上的物理投影区,让低级别图能
+    完整显示父级 S3。配合 parent_iv,s3_end 会扩成父级 K 线右边界,
+    确保末根父级 K 线在子级别上不被裁掉一截。
+
+    硬上限
+    -------
+    若扩展后总根数 > DIVERGENCE_DRILL_BARS_MAX,按以下规则截断:
+      - peak 之后固定保留 AFTER 根(信号验证窗口不丢)
+      - peak 之前扩展到 (MAX - AFTER) 根
+      - 窗口总长 = MAX 根
 
     Parameters
     ----------
     peak_ts : pd.Timestamp | datetime
-        背离极值时间(底背离 = K 线最低价时间,顶背离 = K 线最高价时间)
+        背离极值时间(底背离 = K 线最低价时间,顶背离 = K 线最高价时间)。
     next_iv : str
-        目标钻取周期,如 'daily' / '4h' / '1h' 等
+        目标钻取周期,如 'daily' / '4h' / '1h' 等。
     market : str
         所属 market（'crypto' / 'us_stock' / 'cn_stock' / 'hk_stock'）。
         默认 'crypto' 是为了向后兼容老调用方,但对 stock + intraday 组合
         必须显式传入,否则 stock 1h 钻取窗口会被压缩 5-8 倍。
         所有产用调用方（main.py / app.py JS / api 层）都应当传入实际 market。
+    s3_start_iso, s3_end_iso : str | None
+        父级 S_last 段两端 open_time(ISO 格式)。提供则启用自适应扩展。
+        缺一不可,缺任一项都退回默认窗口(不会抛异常)。
+    parent_iv : str | None
+        父级周期名(weekly / daily 等)。配合 s3_end_iso 把"父级 K 线 open_time"
+        扩成"父级 K 线右边界",这跟 plot_kline 里 MA99 染色范围的处理一致,
+        避免末根父级 K 线在子级别上少染一截。缺失时退回 open_time。
 
     Returns
     -------
@@ -193,11 +227,52 @@ def compute_divergence_drill_window(peak_ts, next_iv, market='crypto'):
         peak_ts = pd.Timestamp(peak_ts)
     if next_iv not in INTERVAL_MINUTES:
         raise ValueError(f"未知 interval: {next_iv!r}")
+
     minutes = INTERVAL_MINUTES[next_iv]
     factor = compute_lookback_factor(market, next_iv)
-    before = _dt.timedelta(minutes=minutes * DIVERGENCE_DRILL_BARS_BEFORE * factor)
-    after  = _dt.timedelta(minutes=minutes * DIVERGENCE_DRILL_BARS_AFTER  * factor)
-    return peak_ts - before, peak_ts + after
+    bar_minutes = minutes * factor   # 一根子级 K 线对应的物理时长(含交易日因子)
+
+    # ── 默认窗口:peak ± (BEFORE, AFTER) 根 ──
+    default_before = _dt.timedelta(minutes=bar_minutes * DIVERGENCE_DRILL_BARS_BEFORE)
+    default_after  = _dt.timedelta(minutes=bar_minutes * DIVERGENCE_DRILL_BARS_AFTER)
+    win_start = peak_ts - default_before
+    win_end   = peak_ts + default_after
+
+    # ── 自适应扩展:若父级 S3 投影超出默认窗口,把窗口外扩去包住它 ──
+    # 让低级别图能完整显示父级 S3 范围,跟 plot_kline 的 MA99 染色范围一致。
+    if s3_start_iso and s3_end_iso:
+        try:
+            s3s = pd.Timestamp(s3_start_iso)
+            s3e = pd.Timestamp(s3_end_iso)
+            if s3s.tzinfo is not None:
+                s3s = s3s.tz_localize(None)
+            if s3e.tzinfo is not None:
+                s3e = s3e.tz_localize(None)
+            # s3_end 是父级 K 线 open_time,加一根父级 K 线时长扩成右边界
+            if parent_iv and parent_iv in INTERVAL_MINUTES:
+                s3e_right = s3e + _dt.timedelta(minutes=INTERVAL_MINUTES[parent_iv])
+            else:
+                s3e_right = s3e
+            if s3s < win_start:
+                win_start = s3s
+            if s3e_right > win_end:
+                win_end = s3e_right
+        except (ValueError, TypeError):
+            # 解析失败 → 保持默认窗口,不阻断绘图
+            pass
+
+    # ── 硬上限:扩展后超过 MAX 根则按"前侧历史优先 + 末段 AFTER 不丢"截断 ──
+    # 14 寸屏每根 K 线 ~17px,800 根仍清晰可辨;再多就视觉拥挤了。
+    total_bars = (win_end - win_start).total_seconds() / 60.0 / bar_minutes
+    if total_bars > DIVERGENCE_DRILL_BARS_MAX:
+        after_keep = _dt.timedelta(minutes=bar_minutes * DIVERGENCE_DRILL_BARS_AFTER)
+        before_max = _dt.timedelta(
+            minutes=bar_minutes * (DIVERGENCE_DRILL_BARS_MAX - DIVERGENCE_DRILL_BARS_AFTER)
+        )
+        win_start = peak_ts - before_max
+        win_end   = peak_ts + after_keep
+
+    return win_start, win_end
 
 
 def format_range_label(start_ts, end_ts, interval):

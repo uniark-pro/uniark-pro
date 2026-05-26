@@ -6,10 +6,13 @@ K线绘图 - 多 market + 多币种 + 多周期统一入口
 
 market 维度
 -----------
-新增 'crypto' | 'stock' 维度。CLI 第一个参数即为 market。
-- crypto：沿用 binance 数据源，title 含 'USDT' 后缀，DATA_FLOOR=2017-07-01
-- stock ：走 yfinance 数据源（auto_adjust 复权），title 不带 USDT，
-          DATA_FLOOR 放在 1970-01-01（远早于任何能拿到的美股历史）
+四个 market：'crypto' | 'us_stock' | 'cn_stock' | 'hk_stock'。
+CLI 第一个参数即为 market。
+- crypto：binance 数据源，title 含 'USDT' 后缀，DATA_FLOOR=2017-07-01
+- us_stock / cn_stock / hk_stock：
+    主源 yfinance(auto_adjust 复权) → 备用 akshare(qfq 前复权)，
+    路由由 data.py 负责。title 不带 USDT，DATA_FLOOR 按 market 分别设定
+    (us_stock/hk_stock = 1970-01-01, cn_stock = 1990-01-01 上交所成立年)。
 
 币种白名单语义：
   SYMBOL_CONFIG_BY_MARKET 不再是"允许币种白名单"，只是"显式覆盖配置"。
@@ -97,9 +100,9 @@ SYMBOL_CONFIG_BY_MARKET = {
     'us_stock': {
         'MU':   {'short': 'MU',   'cn_name': '美光'},
         'NVDA': {'short': 'NVDA', 'cn_name': '英伟达'},
-        'AAPL': {'short': 'AAPL', 'cn_name': '苹果'},
         'TSLA': {'short': 'TSLA', 'cn_name': '特斯拉'},
-        'MSFT': {'short': 'MSFT', 'cn_name': '微软'},
+        'AAPL': {'short': 'GC=F', 'cn_name': '黄金'},
+        'MSFT': {'short': 'SI=F', 'cn_name': '白银'},
     },
     'cn_stock': {
         # short 去掉 .SS / .SZ 后缀（图表/文件名更短），cn_name 是中文简称
@@ -391,10 +394,12 @@ def render_chart(market, symbol, interval, start_str=None, end_str=None,
     if macd_ax is not None:
         annotate_divergences(macd_ax, df, divergences)
 
-    # ── 锁定锚点:主面板 MA99 染色 ─────────────────────────────────────
+    # ── 锁定锚点:主面板 MA99 染色 + 背景投影 ──────────────────────────
     # 把 locked_anchor 里的 s3_start_iso ~ s3_end_iso 时间窗投影到当前周期 df
-    # 上,得到 [lo, hi] 闭区间下标。然后在主面板叠加一条红色 MA99 子线段,
-    # 覆盖该区间——视觉上 MA99 在锚点期间变红。
+    # 上,得到 [lo, hi] 闭区间下标。然后:
+    #   (1) 主面板叠加红色 MA99 子线段,覆盖该区间(原有功能,保留)
+    #   (2) 三个面板背景同时叠加半透明色带(本次新增)
+    #   (3) 主面板叠加两条水平虚线,标出上级别 S3 段的价格极值(本次新增)
     #
     # 投影规则（关键细节：父级 K 线 open_time 的右边界）:
     #   s3_start_iso / s3_end_iso 都是父级 K 线的 open_time。一根 K 线"代表"
@@ -431,9 +436,69 @@ def render_chart(market, symbol, interval, start_str=None, end_str=None,
                     hi = int(df.index.searchsorted(s3e_right_edge, side='left')) - 1
                 else:
                     hi = int(df.index.searchsorted(s3e_ts, side='right')) - 1
-                # 区间至少 2 根才有意义(画线段)、要落在当前数据范围内
+                # 区间至少 2 根才有意义、要落在当前数据范围内
                 if 0 <= lo < hi < len(df):
+
+                    # ── (2) 背景色带:三个面板同步叠加半透明色块 ───────
+                    # 颜色按背离方向区分,沿用项目内 bullish/bearish 配色:
+                    #   bullish (底背离 → 多头偏向) = #ff5566 暖红
+                    #   bearish (顶背离 → 空头偏向) = #22cc44 冷绿
+                    # alpha 极低(0.06) 避免与 K 线本体的鲜红/亮绿混淆,
+                    # 仅作为"背景上下文"提示而非视觉焦点。
+                    kind = anchor_dict.get('kind', 'bullish')
+                    band_color = '#ff5566' if kind == 'bullish' else '#22cc44'
+                    # axvspan 用 ±0.5 让色带正好对齐 K 线柱的左右边界
+                    x_left  = lo - 0.5
+                    x_right = hi + 0.5
+                    for ax_idx in (0, 2, 4):    # 价格 / 量 / MACD
+                        if ax_idx < len(axes):
+                            axes[ax_idx].axvspan(
+                                x_left, x_right,
+                                color=band_color,
+                                alpha=0.07,
+                                zorder=0,        # 压在所有元素最底层
+                            )
+
+                    # ── (3) 价格水平虚线:S3 段价格极值,仅主面板 ──────
+                    # 用 df 在 [lo, hi] 区间的 low.min() / high.max() 作为
+                    # 上级别 S3 段的真实价格极值。这两条线告诉使用者:
+                    # "上级别关心的价格区间在 [s3_low, s3_high]"
+                    s3_window = df.iloc[lo:hi + 1]
+                    s3_low_price  = float(s3_window['low'].min())
+                    s3_high_price = float(s3_window['high'].max())
                     price_ax = axes[0]
+                    for price, label_prefix in (
+                        (s3_high_price, 'S3 高'),
+                        (s3_low_price,  'S3 低'),
+                    ):
+                        price_ax.axhline(
+                            y=price,
+                            color=ANCHOR_HIGHLIGHT_COLOR,
+                            linewidth=1.2,
+                            linestyle='--',
+                            alpha=0.75,
+                            zorder=2,        # 在 K 线之下、网格之上
+                        )
+                        # 右端价格标签:浮在图内右侧
+                        price_ax.text(
+                            len(df) - 1, price,
+                            f' {label_prefix} {price:,.2f}',
+                            color=ANCHOR_HIGHLIGHT_COLOR,
+                            fontsize=9,
+                            fontweight='bold',
+                            va='center',
+                            ha='left',
+                            zorder=11,
+                            bbox=dict(
+                                boxstyle='round,pad=0.25',
+                                facecolor='white',
+                                edgecolor=ANCHOR_HIGHLIGHT_COLOR,
+                                linewidth=0.6,
+                                alpha=0.85,
+                            ),
+                        )
+
+                    # ── (1) MA99 子段染色 ─────────────────────────────
                     xs = list(range(lo, hi + 1))
                     ys = df['ma99'].iloc[lo:hi + 1].values
                     price_ax.plot(
