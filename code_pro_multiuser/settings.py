@@ -501,10 +501,19 @@ def save_settings_for_user(username: str, data: dict):
 
 # ── 用户认证 ────────────────────────────────────────────────────────────
 import hashlib as _hashlib
+import bcrypt as _bcrypt
 
 
 def _hash_password(password: str) -> str:
-    return 'sha256:' + _hashlib.sha256(password.encode('utf-8')).hexdigest()
+    """生成 bcrypt 密码哈希。
+
+    bcrypt 自带随机盐和自适应工作因子（默认 12 轮）。每次调用即使密码相同,
+    生成的哈希也不同。返回 ASCII 字符串,可直接 JSON 序列化。
+    """
+    return _bcrypt.hashpw(
+        password.encode('utf-8'),
+        _bcrypt.gensalt(),
+    ).decode('utf-8')
 
 
 def load_users() -> dict:
@@ -518,11 +527,47 @@ def load_users() -> dict:
         return {}
 
 
+def _save_users(users: dict) -> bool:
+    """写回 users.json。成功返回 True,失败返回 False(不抛异常)。"""
+    try:
+        with open(USERS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(users, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception:
+        return False
+
+
 def verify_password(username: str, password: str) -> bool:
-    """验证用户名+密码是否正确。"""
+    """验证用户名+密码是否正确。
+
+    支持两种存储格式:
+      1. bcrypt 格式: $2b$12$... (新)
+      2. 旧 'sha256:<hex>' 格式 —— 验证通过后自动升级为 bcrypt,
+         对用户无感(下次登录已是 bcrypt)。
+    """
     users = load_users()
     info = users.get(username)
     if not info:
         return False
     stored = info.get('password_hash', '')
-    return stored == _hash_password(password)
+    if not stored:
+        return False
+
+    # 旧 sha256: 前缀格式 —— 验证 + 自动迁移
+    if stored.startswith('sha256:'):
+        old_hash = 'sha256:' + _hashlib.sha256(password.encode('utf-8')).hexdigest()
+        if stored != old_hash:
+            return False
+        # 验证通过,顺手升级到 bcrypt(失败不影响本次登录)
+        try:
+            users[username]['password_hash'] = _hash_password(password)
+            _save_users(users)
+        except Exception:
+            pass
+        return True
+
+    # bcrypt 格式
+    try:
+        return _bcrypt.checkpw(password.encode('utf-8'), stored.encode('utf-8'))
+    except Exception:
+        return False

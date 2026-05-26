@@ -1,7 +1,8 @@
 """
 用户管理命令行工具
 =================
-用于管理 K 线系统的多用户账号。密码以 sha256 哈希存储在 users.json。
+用于管理 K 线系统的多用户账号。密码以 bcrypt 哈希存储在 users.json
+(自带随机盐 + 自适应工作因子,比无盐 sha256 安全得多)。
 
 用法：
   python3 manage_users.py list                        # 列出所有用户
@@ -18,14 +19,23 @@
 import sys
 import os
 import json
-import hashlib
+
+try:
+    import bcrypt
+except ImportError:
+    print('[错误] 未安装 bcrypt。请运行: pip install bcrypt')
+    sys.exit(1)
 
 _DIR       = os.path.dirname(os.path.abspath(__file__))
 USERS_FILE = os.path.join(_DIR, 'users.json')
 
 
 def _hash(password: str) -> str:
-    return 'sha256:' + hashlib.sha256(password.encode('utf-8')).hexdigest()
+    """生成 bcrypt 密码哈希(字符串形式,可直接 JSON 序列化)。"""
+    return bcrypt.hashpw(
+        password.encode('utf-8'),
+        bcrypt.gensalt(),
+    ).decode('utf-8')
 
 
 def _load() -> dict:

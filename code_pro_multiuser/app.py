@@ -46,7 +46,53 @@ import settings
 from settings import MARKETS, ENTRY_INTERVALS_BY_MARKET, get_entry_intervals
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("KLINE_SECRET_KEY", "change-me-in-production-$(id -u)")
+
+
+def _load_or_create_secret_key() -> str:
+    """加载或创建 Flask session 的 secret_key。
+
+    优先级:
+      1. 环境变量 KLINE_SECRET_KEY (适合正式部署/CI)
+      2. 文件 .flask_secret_key (首次启动自动生成、持久化,chmod 600)
+      3. 内存中的随机 key (前两条都失败时的最后兜底;重启会让用户被登出)
+
+    为什么不用硬编码默认值: 多人各自部署同一份代码、不设环境变量时,
+    若有硬编码默认值,所有人会共享同一个 secret_key —— session 可被伪造。
+
+    注意: .flask_secret_key 文件含密钥,务必在 .gitignore 中排除。
+    """
+    env_key = os.environ.get("KLINE_SECRET_KEY")
+    if env_key:
+        return env_key
+
+    key_file = os.path.join(_DIR, '.flask_secret_key')
+    if os.path.exists(key_file):
+        try:
+            with open(key_file, 'r', encoding='utf-8') as f:
+                k = f.read().strip()
+                if k:
+                    return k
+        except Exception:
+            pass
+
+    # 首次启动: 生成新的随机 key 并持久化
+    import secrets
+    new_key = secrets.token_urlsafe(48)
+    try:
+        with open(key_file, 'w', encoding='utf-8') as f:
+            f.write(new_key)
+        try:
+            os.chmod(key_file, 0o600)
+        except Exception:
+            pass  # Windows 等系统 chmod 可能失败,不致命
+    except Exception:
+        # 文件写不进去也不致命 —— 只是这次启动用的 key 不持久,
+        # 下次重启时所有用户需要重新登录。
+        pass
+    return new_key
+
+
+app.secret_key = _load_or_create_secret_key()
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 
