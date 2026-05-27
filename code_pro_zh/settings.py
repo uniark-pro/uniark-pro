@@ -91,32 +91,39 @@ def get_entry_intervals(market):
 DEFAULT_LANGUAGE = 'zh'
 DEFAULT_MARKET   = 'crypto'
 
-# 默认标的菜单
-# ─────────────
-# 新用户首次启动 / 删过 user_settings.json 的用户首次启动时,会用这份默认值
-# 填进 settings。一旦用户保存过设置,这份默认值就不再被读取。
-#
-# 数据源:plot_kline.SYMBOL_CONFIG_BY_MARKET 是绘图层维护的"ticker → {short,
-# cn_name}"权威字典(图表标题、文件名、按钮显示都要查它),本默认菜单完全
-# 派生自它,避免两处硬编码的同步问题。在 plot_kline 加新标的会自动出现在
-# 新用户菜单里。
-#
-# 派生时机:懒加载——plot_kline 依赖 matplotlib / data / indicator 等重型
-# 模块,在 settings 模块顶部直接 import 会让任何用 settings 的进程都被迫
-# 加载它们(还可能触发循环依赖)。改成函数后只在真正构造默认 block 时才
-# 触发 import,与本文件下方 _lookup_builtin_cn_name 同款思路。
-def _default_symbols_for_market(market):
-    """从 plot_kline.SYMBOL_CONFIG_BY_MARKET 派生该 market 的默认标的菜单。
-
-    返回 [{'ticker', 'cn_name'}, ...]——顺序即 plot_kline 配置表里的顺序
-    (Python 3.7+ dict 保序)。plot_kline 加载失败时退回空列表,调用方按需兜底。
-    """
-    try:
-        from plot_kline import SYMBOL_CONFIG_BY_MARKET
-    except Exception:
-        return []
-    return [{'ticker': ticker, 'cn_name': cfg.get('cn_name', '')}
-            for ticker, cfg in SYMBOL_CONFIG_BY_MARKET.get(market, {}).items()]
+DEFAULT_SYMBOLS_BY_MARKET = {
+    # crypto: cn_name 跟 short 同（多数币种没人专门取中文名）
+    'crypto':   [
+        {'ticker': 'BTCUSDT', 'cn_name': 'BTC'},
+        {'ticker': 'ETHUSDT', 'cn_name': 'ETH'},
+        {'ticker': 'SOLUSDT', 'cn_name': 'SOL'},
+        {'ticker': 'BNBUSDT', 'cn_name': 'BNB'},
+        {'ticker': 'FILUSDT', 'cn_name': 'FIL'},
+    ],
+    'us_stock': [
+        {'ticker': 'MU',   'cn_name': '美光'},
+        {'ticker': 'NVDA', 'cn_name': '英伟达'},
+        {'ticker': 'AAPL', 'cn_name': '苹果'},
+        {'ticker': 'TSLA', 'cn_name': '特斯拉'},
+        {'ticker': 'MSFT', 'cn_name': '微软'},
+    ],
+    # A 股龙头：贵州茅台 / 宁德时代 / 招商银行 / 比亚迪 / 中国平安
+    'cn_stock': [
+        {'ticker': '600519.SS', 'cn_name': '茅台'},
+        {'ticker': '300750.SZ', 'cn_name': '宁德时代'},
+        {'ticker': '600036.SS', 'cn_name': '招商银行'},
+        {'ticker': '002594.SZ', 'cn_name': '比亚迪'},
+        {'ticker': '601318.SS', 'cn_name': '中国平安'},
+    ],
+    # 港股龙头：腾讯 / 阿里巴巴 / 美团 / 小米 / 香港交易所
+    'hk_stock': [
+        {'ticker': '0700.HK', 'cn_name': '腾讯'},
+        {'ticker': '9988.HK', 'cn_name': '阿里巴巴'},
+        {'ticker': '3690.HK', 'cn_name': '美团'},
+        {'ticker': '1810.HK', 'cn_name': '小米'},
+        {'ticker': '0388.HK', 'cn_name': '港交所'},
+    ],
+}
 
 # 每个 market × 每个入口周期的默认时段。
 DEFAULT_RANGES_BY_MARKET = {
@@ -128,77 +135,85 @@ DEFAULT_RANGES_BY_MARKET = {
             {'label': '2025-04 ~ 2027-11', 'start': '17 Apr, 2025', 'end': '30 Nov, 2027'},
         ],
         '3day': [
-            {'label': '2017-08 ~ 2020-05', 'start': '17 Aug, 2017', 'end': '30 May, 2020'},
-            {'label': '2020-03 ~ 2022-12', 'start': '17 Mar, 2020', 'end': '30 Dec, 2022'},
-            {'label': '2022-10 ~ 2025-10', 'start': '17 Oct, 2022', 'end': '30 Oct, 2025'},
-            {'label': '2025-04 ~ 2027-11', 'start': '17 Apr, 2025', 'end': '30 Nov, 2027'},
+            {'label': '2022-01 ~ 2023-01', 'start': '01 Jan, 2022', 'end': '01 Jan, 2023'},
+            {'label': '2023-01 ~ 2024-01', 'start': '01 Jan, 2023', 'end': '01 Jan, 2024'},
+            {'label': '2024-01 ~ 2025-01', 'start': '01 Jan, 2024', 'end': '01 Jan, 2025'},
+            {'label': '2025-01 ~ 2026-01', 'start': '01 Jan, 2025', 'end': '01 Jan, 2026'},
         ],
         'daily': [
-            {'label': '2017-08 ~ 2020-05', 'start': '17 Aug, 2017', 'end': '30 May, 2020'},
-            {'label': '2020-03 ~ 2022-12', 'start': '17 Mar, 2020', 'end': '30 Dec, 2022'},
-            {'label': '2022-10 ~ 2025-10', 'start': '17 Oct, 2022', 'end': '30 Oct, 2025'},
-            {'label': '2025-04 ~ 2027-11', 'start': '17 Apr, 2025', 'end': '30 Nov, 2027'},
+            {'label': '2024-01 ~ 2024-05', 'start': '01 Jan, 2024', 'end': '01 May, 2024'},
+            {'label': '2024-05 ~ 2024-09', 'start': '01 May, 2024', 'end': '01 Sep, 2024'},
+            {'label': '2024-09 ~ 2025-01', 'start': '01 Sep, 2024', 'end': '01 Jan, 2025'},
+            {'label': '2025-01 ~ 2025-05', 'start': '01 Jan, 2025', 'end': '01 May, 2025'},
         ],
     },
     'us_stock': {
         # 美股 weekly：~3 年覆盖一个完整牛熊节奏
         'weekly': [
-            {'label': '2021-01 ~ 2023-04', 'start': '01 Jan, 2021', 'end': '01 Apr, 2023'},
-            {'label': '2023-01 ~ 2025-04', 'start': '01 Jan, 2023', 'end': '01 Apr, 2025'},
-            {'label': '2025-01 ~ 2027-01', 'start': '01 Jan, 2025', 'end': '01 Jan, 2027'},
+            {'label': '2018-01 ~ 2021-01', 'start': '01 Jan, 2018', 'end': '01 Jan, 2021'},
+            {'label': '2021-01 ~ 2024-01', 'start': '01 Jan, 2021', 'end': '01 Jan, 2024'},
+            {'label': '2023-01 ~ 2026-01', 'start': '01 Jan, 2023', 'end': '01 Jan, 2026'},
         ],
         # 美股 3day：~1 年（约 120 根 3 日 K，与 daily 一屏密度相当）
         '3day': [
-            {'label': '2021-01 ~ 2023-04', 'start': '01 Jan, 2021', 'end': '01 Apr, 2023'},
-            {'label': '2023-01 ~ 2025-04', 'start': '01 Jan, 2023', 'end': '01 Apr, 2025'},
-            {'label': '2025-01 ~ 2027-01', 'start': '01 Jan, 2025', 'end': '01 Jan, 2027'},
+            {'label': '2022-01 ~ 2023-01', 'start': '01 Jan, 2022', 'end': '01 Jan, 2023'},
+            {'label': '2023-01 ~ 2024-01', 'start': '01 Jan, 2023', 'end': '01 Jan, 2024'},
+            {'label': '2024-01 ~ 2025-01', 'start': '01 Jan, 2024', 'end': '01 Jan, 2025'},
+            {'label': '2025-01 ~ 2026-01', 'start': '01 Jan, 2025', 'end': '01 Jan, 2026'},
         ],
         # 美股 daily：~6 月（约 120 个交易日）
         'daily': [
-            {'label': '2021-01 ~ 2023-04', 'start': '01 Jan, 2021', 'end': '01 Apr, 2023'},
-            {'label': '2023-01 ~ 2025-04', 'start': '01 Jan, 2023', 'end': '01 Apr, 2025'},
-            {'label': '2025-01 ~ 2027-01', 'start': '01 Jan, 2025', 'end': '01 Jan, 2027'},
+            {'label': '2024-01 ~ 2024-07', 'start': '01 Jan, 2024', 'end': '01 Jul, 2024'},
+            {'label': '2024-07 ~ 2025-01', 'start': '01 Jul, 2024', 'end': '01 Jan, 2025'},
+            {'label': '2025-01 ~ 2025-07', 'start': '01 Jan, 2025', 'end': '01 Jul, 2025'},
+            {'label': '2025-07 ~ 2026-01', 'start': '01 Jul, 2025', 'end': '01 Jan, 2026'},
         ],
     },
     'cn_stock': {
         # A 股 weekly：覆盖典型牛熊周期（2014-2015 杠杆牛、2018 熊、2021 茅台顶、
         # 2024 反转）。锚点参照 A 股的实际节奏，跟美股错开
         'weekly': [
-            {'label': '2021-01 ~ 2023-04', 'start': '01 Jan, 2021', 'end': '01 Apr, 2023'},
-            {'label': '2023-01 ~ 2025-04', 'start': '01 Jan, 2023', 'end': '01 Apr, 2025'},
-            {'label': '2025-01 ~ 2027-01', 'start': '01 Jan, 2025', 'end': '01 Jan, 2027'},
+            {'label': '2014-01 ~ 2017-01', 'start': '01 Jan, 2014', 'end': '01 Jan, 2017'},
+            {'label': '2017-01 ~ 2020-01', 'start': '01 Jan, 2017', 'end': '01 Jan, 2020'},
+            {'label': '2020-01 ~ 2023-01', 'start': '01 Jan, 2020', 'end': '01 Jan, 2023'},
+            {'label': '2023-01 ~ 2026-01', 'start': '01 Jan, 2023', 'end': '01 Jan, 2026'},
         ],
         # A 股 3day：~1 年（约 120 根 3 日 K，与 daily 一屏密度相当）
         '3day': [
-            {'label': '2021-01 ~ 2023-04', 'start': '01 Jan, 2021', 'end': '01 Apr, 2023'},
-            {'label': '2023-01 ~ 2025-04', 'start': '01 Jan, 2023', 'end': '01 Apr, 2025'},
-            {'label': '2025-01 ~ 2027-01', 'start': '01 Jan, 2025', 'end': '01 Jan, 2027'},
+            {'label': '2022-01 ~ 2023-01', 'start': '01 Jan, 2022', 'end': '01 Jan, 2023'},
+            {'label': '2023-01 ~ 2024-01', 'start': '01 Jan, 2023', 'end': '01 Jan, 2024'},
+            {'label': '2024-01 ~ 2025-01', 'start': '01 Jan, 2024', 'end': '01 Jan, 2025'},
+            {'label': '2025-01 ~ 2026-01', 'start': '01 Jan, 2025', 'end': '01 Jan, 2026'},
         ],
         # A 股 daily：~6 月（约 120 个交易日）
         'daily': [
-            {'label': '2021-01 ~ 2023-04', 'start': '01 Jan, 2021', 'end': '01 Apr, 2023'},
-            {'label': '2023-01 ~ 2025-04', 'start': '01 Jan, 2023', 'end': '01 Apr, 2025'},
-            {'label': '2025-01 ~ 2027-01', 'start': '01 Jan, 2025', 'end': '01 Jan, 2027'},
+            {'label': '2024-01 ~ 2024-07', 'start': '01 Jan, 2024', 'end': '01 Jul, 2024'},
+            {'label': '2024-07 ~ 2025-01', 'start': '01 Jul, 2024', 'end': '01 Jan, 2025'},
+            {'label': '2025-01 ~ 2025-07', 'start': '01 Jan, 2025', 'end': '01 Jul, 2025'},
+            {'label': '2025-07 ~ 2026-01', 'start': '01 Jul, 2025', 'end': '01 Jan, 2026'},
         ],
     },
     'hk_stock': {
         # 港股 weekly：港股节奏比 A 股更国际化但有自己的特点
         # （2018 顶 / 2020 底 / 2021 互联网监管熊 / 2024-2025 反转）
         'weekly': [
-            {'label': '2021-01 ~ 2023-04', 'start': '01 Jan, 2021', 'end': '01 Apr, 2023'},
-            {'label': '2023-01 ~ 2025-04', 'start': '01 Jan, 2023', 'end': '01 Apr, 2025'},
-            {'label': '2025-01 ~ 2027-01', 'start': '01 Jan, 2025', 'end': '01 Jan, 2027'},
+            {'label': '2017-01 ~ 2020-01', 'start': '01 Jan, 2017', 'end': '01 Jan, 2020'},
+            {'label': '2020-01 ~ 2023-01', 'start': '01 Jan, 2020', 'end': '01 Jan, 2023'},
+            {'label': '2022-01 ~ 2025-01', 'start': '01 Jan, 2022', 'end': '01 Jan, 2025'},
+            {'label': '2023-01 ~ 2026-01', 'start': '01 Jan, 2023', 'end': '01 Jan, 2026'},
         ],
         # 港股 3day：~1 年（约 120 根 3 日 K，与 daily 一屏密度相当）
         '3day': [
-            {'label': '2021-01 ~ 2023-04', 'start': '01 Jan, 2021', 'end': '01 Apr, 2023'},
-            {'label': '2023-01 ~ 2025-04', 'start': '01 Jan, 2023', 'end': '01 Apr, 2025'},
-            {'label': '2025-01 ~ 2027-01', 'start': '01 Jan, 2025', 'end': '01 Jan, 2027'},
+            {'label': '2022-01 ~ 2023-01', 'start': '01 Jan, 2022', 'end': '01 Jan, 2023'},
+            {'label': '2023-01 ~ 2024-01', 'start': '01 Jan, 2023', 'end': '01 Jan, 2024'},
+            {'label': '2024-01 ~ 2025-01', 'start': '01 Jan, 2024', 'end': '01 Jan, 2025'},
+            {'label': '2025-01 ~ 2026-01', 'start': '01 Jan, 2025', 'end': '01 Jan, 2026'},
         ],
         'daily': [
-            {'label': '2021-01 ~ 2023-04', 'start': '01 Jan, 2021', 'end': '01 Apr, 2023'},
-            {'label': '2023-01 ~ 2025-04', 'start': '01 Jan, 2023', 'end': '01 Apr, 2025'},
-            {'label': '2025-01 ~ 2027-01', 'start': '01 Jan, 2025', 'end': '01 Jan, 2027'},
+            {'label': '2024-01 ~ 2024-07', 'start': '01 Jan, 2024', 'end': '01 Jul, 2024'},
+            {'label': '2024-07 ~ 2025-01', 'start': '01 Jul, 2024', 'end': '01 Jan, 2025'},
+            {'label': '2025-01 ~ 2025-07', 'start': '01 Jan, 2025', 'end': '01 Jul, 2025'},
+            {'label': '2025-07 ~ 2026-01', 'start': '01 Jul, 2025', 'end': '01 Jan, 2026'},
         ],
     },
 }
@@ -207,10 +222,10 @@ DEFAULT_RANGES_BY_MARKET = {
 def _default_market_block(market):
     """返回某个 market 的默认 {symbols, ranges} 子结构（深拷贝）。
 
-    symbols 从 plot_kline 内置表派生(v4 dict 数组)。
+    symbols 是 [{'ticker', 'cn_name'}, ...] 的 dict 数组（v4 结构）。
     """
     return {
-        'symbols': _default_symbols_for_market(market),
+        'symbols': [dict(s) for s in DEFAULT_SYMBOLS_BY_MARKET[market]],
         'ranges': {
             iv: [dict(r) for r in DEFAULT_RANGES_BY_MARKET[market].get(iv, [])]
             for iv in ENTRY_INTERVALS_BY_MARKET[market]
@@ -334,8 +349,7 @@ def _build_market_block(raw, market):
 def load_settings():
     """
     读取设置。文件缺失或损坏时返回默认值，不抛异常。
-    自动处理 v1→v4、v2→v4、v3→v4 迁移(symbols 字符串数组自动包成
-    {ticker, cn_name} dict,cn_name 从 plot_kline 内置表查)。
+    自动处理 v1→v3、v2→v3 迁移。
     """
     if not os.path.exists(SETTINGS_FILE):
         return _defaults()
@@ -435,139 +449,3 @@ def validate_date_str(s):
     成功返回 datetime；失败抛 ValueError。
     """
     return _dt.datetime.strptime(s.strip(), '%d %b, %Y')
-
-
-# ── 多用户支持：按用户名隔离 settings 文件 ─────────────────────────────
-USERS_FILE = os.path.join(_DIR, 'users.json')
-
-
-def get_user_settings_file(username: str) -> str:
-    """返回指定用户的 settings 文件绝对路径。"""
-    return os.path.join(_DIR, f'user_settings_{username}.json')
-
-
-def load_settings_for_user(username: str) -> dict:
-    """读取指定用户的 settings，逻辑与 load_settings() 完全一致。"""
-    path = get_user_settings_file(username)
-    if not os.path.exists(path):
-        return _defaults()
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    except Exception:
-        return _defaults()
-
-    out = _defaults()
-    if data.get('language') in ('en', 'zh'):
-        out['language'] = data['language']
-    cur_market = data.get('market')
-    if cur_market == 'stock':
-        cur_market = 'us_stock'
-    if cur_market in MARKETS:
-        out['market'] = cur_market
-
-    has_crypto   = isinstance(data.get('crypto'),   dict)
-    has_us_stock = isinstance(data.get('us_stock'), dict)
-    has_v2_stock = isinstance(data.get('stock'),    dict)
-    has_cn_stock = isinstance(data.get('cn_stock'), dict)
-    has_hk_stock = isinstance(data.get('hk_stock'), dict)
-    has_v1_top   = ('symbols' in data) or ('ranges' in data)
-
-    if has_crypto:
-        out['crypto'] = _build_market_block(data.get('crypto'), 'crypto')
-    elif has_v1_top:
-        legacy = {'symbols': data.get('symbols'), 'ranges': data.get('ranges')}
-        out['crypto'] = _build_market_block(legacy, 'crypto')
-
-    if has_us_stock:
-        out['us_stock'] = _build_market_block(data.get('us_stock'), 'us_stock')
-    elif has_v2_stock:
-        out['us_stock'] = _build_market_block(data.get('stock'), 'us_stock')
-
-    if has_cn_stock:
-        out['cn_stock'] = _build_market_block(data.get('cn_stock'), 'cn_stock')
-    if has_hk_stock:
-        out['hk_stock'] = _build_market_block(data.get('hk_stock'), 'hk_stock')
-
-    return out
-
-
-def save_settings_for_user(username: str, data: dict):
-    """保存指定用户的 settings。出错时抛异常。"""
-    path = get_user_settings_file(username)
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-
-# ── 用户认证 ────────────────────────────────────────────────────────────
-import hashlib as _hashlib
-import bcrypt as _bcrypt
-
-
-def _hash_password(password: str) -> str:
-    """生成 bcrypt 密码哈希。
-
-    bcrypt 自带随机盐和自适应工作因子（默认 12 轮）。每次调用即使密码相同,
-    生成的哈希也不同。返回 ASCII 字符串,可直接 JSON 序列化。
-    """
-    return _bcrypt.hashpw(
-        password.encode('utf-8'),
-        _bcrypt.gensalt(),
-    ).decode('utf-8')
-
-
-def load_users() -> dict:
-    """读取 users.json，返回 {username: {password_hash, ...}}。"""
-    if not os.path.exists(USERS_FILE):
-        return {}
-    try:
-        with open(USERS_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
-def _save_users(users: dict) -> bool:
-    """写回 users.json。成功返回 True,失败返回 False(不抛异常)。"""
-    try:
-        with open(USERS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(users, f, ensure_ascii=False, indent=2)
-        return True
-    except Exception:
-        return False
-
-
-def verify_password(username: str, password: str) -> bool:
-    """验证用户名+密码是否正确。
-
-    支持两种存储格式:
-      1. bcrypt 格式: $2b$12$... (新)
-      2. 旧 'sha256:<hex>' 格式 —— 验证通过后自动升级为 bcrypt,
-         对用户无感(下次登录已是 bcrypt)。
-    """
-    users = load_users()
-    info = users.get(username)
-    if not info:
-        return False
-    stored = info.get('password_hash', '')
-    if not stored:
-        return False
-
-    # 旧 sha256: 前缀格式 —— 验证 + 自动迁移
-    if stored.startswith('sha256:'):
-        old_hash = 'sha256:' + _hashlib.sha256(password.encode('utf-8')).hexdigest()
-        if stored != old_hash:
-            return False
-        # 验证通过,顺手升级到 bcrypt(失败不影响本次登录)
-        try:
-            users[username]['password_hash'] = _hash_password(password)
-            _save_users(users)
-        except Exception:
-            pass
-        return True
-
-    # bcrypt 格式
-    try:
-        return _bcrypt.checkpw(password.encode('utf-8'), stored.encode('utf-8'))
-    except Exception:
-        return False

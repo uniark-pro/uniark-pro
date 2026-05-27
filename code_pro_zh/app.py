@@ -263,9 +263,6 @@ HTML = r"""
   <div class="top-bar">
     <h1 id="title">📈 K-Line Generator</h1>
     <div class="top-right">
-      <div class="user-badge">👤 <span>{{ username }}</span></div>
-      <a class="scanner-btn" href="/scanner"
-         style="border-color:#7c6ef0;color:#a48af8;">📡 扫描</a>
       <div class="settings-btn" id="btn-settings"
            title="Settings" onclick="openSettings()">⚙</div>
       <div class="lang-switcher">
@@ -1451,9 +1448,6 @@ def post_settings():
         return jsonify({'ok': False, 'error': f'save failed: {e}'})
 
     return jsonify({'ok': True, 'settings': new_settings})
-
-from scanner import register_scanner_routes
-register_scanner_routes(app)
 
 
 if __name__ == '__main__':
