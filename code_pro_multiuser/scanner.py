@@ -19,6 +19,7 @@ from __future__ import annotations
 import datetime as _dt
 import io
 import json
+import os
 import queue
 import sys
 import threading
@@ -54,6 +55,144 @@ DEFAULT_CRYPTO_SYMBOLS: list[str] = [
     'HYPEUSDT',
 ]
 
+# 美股（yfinance 风格 ticker，无后缀）
+DEFAULT_US_SYMBOLS: list[str] = [
+    'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSLA', 'AVGO',
+    'AMD',  'NFLX', 'MU',   'INTC',  'QCOM', 'ADBE', 'CRM',  'ORCL',
+    'CSCO', 'PLTR', 'COIN', 'MSTR',  'SMCI', 'ARM',  'TSM',  'BABA',
+    'JPM',  'BAC',  'V',    'MA',    'DIS',  'BA',   'XOM',  'WMT',
+    'COST', 'UNH',  'LLY',  'JNJ',   'PFE',  'NKE',  'UBER', 'SHOP',
+    'PYPL', 'SOFI',
+]
+
+# A 股（.SS=上交所 6xxxxx / .SZ=深交所 0xxxxx·3xxxxx）
+DEFAULT_CN_SYMBOLS: list[str] = [
+    '600519.SS', '300750.SZ', '600036.SS', '002594.SZ', '601318.SS',
+    '000858.SZ', '600900.SS', '601899.SS', '600276.SS', '000333.SZ',
+    '000651.SZ', '600030.SS', '601166.SS', '600887.SS', '002415.SZ',
+    '601012.SS', '300059.SZ', '002475.SZ', '600104.SS', '601888.SS',
+    '000001.SZ', '600000.SS', '601398.SS', '601988.SS', '600028.SS',
+    '601857.SS', '000002.SZ', '002230.SZ', '688981.SS', '688111.SS',
+]
+
+# 港股（.HK，4 位代码）
+DEFAULT_HK_SYMBOLS: list[str] = [
+    '0700.HK', '9988.HK', '3690.HK', '1810.HK', '0388.HK', '0941.HK',
+    '1299.HK', '0939.HK', '1398.HK', '2318.HK', '0005.HK', '2628.HK',
+    '1024.HK', '9618.HK', '9999.HK', '9888.HK', '2020.HK', '1211.HK',
+    '0883.HK', '0857.HK', '0386.HK', '2331.HK', '6618.HK', '0981.HK',
+    '1093.HK', '2269.HK', '0291.HK', '2382.HK',
+]
+
+# market → 默认标的列表。textarea 留空时按当前 market 取这里的默认。
+DEFAULT_SYMBOLS_BY_MARKET: dict[str, list[str]] = {
+    'crypto':   DEFAULT_CRYPTO_SYMBOLS,
+    'us_stock': DEFAULT_US_SYMBOLS,
+    'cn_stock': DEFAULT_CN_SYMBOLS,
+    'hk_stock': DEFAULT_HK_SYMBOLS,
+}
+
+# 合法 market 白名单（防止前端传入未知值打到数据层）
+VALID_MARKETS: frozenset = frozenset(DEFAULT_SYMBOLS_BY_MARKET)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 每用户扫描清单持久化
+# ═══════════════════════════════════════════════════════════════════════════
+# 扫描器的标的清单按「用户 + 市场」独立保存。每个用户一份
+# scanner_symbols_{username}.json，与多用户版 user_settings_{username}.json
+# 同款命名风格，存在 scanner.py 所在目录。
+#
+# 文件结构（只存用户显式保存过的 market，其余沿用内置默认）：
+#   { "crypto": ["BTCUSDT", ...], "cn_stock": ["600519.SS", ...] }
+#
+# 取值优先级：用户保存的该市场清单 → 内置默认列表。
+_SCANNER_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _safe_username(username: str) -> str:
+    """清洗用户名用于文件名，防止路径穿越。仅保留字母数字下划线连字符。"""
+    cleaned = ''.join(c for c in str(username) if c.isalnum() or c in ('_', '-'))
+    return cleaned or 'default'
+
+
+def _scan_symbols_path(username: str) -> str:
+    return os.path.join(_SCANNER_DIR, f'scanner_symbols_{_safe_username(username)}.json')
+
+
+def _clean_symbol_list(raw) -> list[str]:
+    """归一化标的列表：去空白、全大写、去重保序。接受多行字符串或列表。"""
+    if isinstance(raw, str):
+        items = raw.splitlines()
+    elif isinstance(raw, (list, tuple)):
+        items = list(raw)
+    else:
+        items = []
+    seen: set = set()
+    out: list[str] = []
+    for it in items:
+        s = str(it).strip().upper()
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
+def load_user_scan_symbols(username: str) -> dict:
+    """读取某用户已保存的扫描清单 {market: [sym,...]}。
+    只返回用户显式保存过的 market；文件缺失/损坏 → 返回 {}（调用方退回默认）。"""
+    path = _scan_symbols_path(username)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        return {}
+    out: dict = {}
+    for mk in VALID_MARKETS:
+        syms = _clean_symbol_list(data.get(mk))
+        if syms:
+            out[mk] = syms
+    return out
+
+
+def save_user_scan_symbols(username: str, market: str, symbols) -> bool:
+    """保存某用户某市场的扫描清单。symbols 为空 → 删除该市场覆盖（恢复内置默认）。
+    其它市场的已存清单保持不变。成功返回 True。"""
+    if market not in VALID_MARKETS:
+        return False
+    path = _scan_symbols_path(username)
+    data: dict = {}
+    if os.path.exists(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                data = {}
+        except Exception:
+            data = {}
+    clean = _clean_symbol_list(symbols)
+    if clean:
+        data[market] = clean
+    else:
+        data.pop(market, None)   # 空 = 取消自定义，回退内置默认
+    try:
+        tmp = path + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)    # 原子替换，避免写一半被读到
+        return True
+    except Exception as e:
+        print(f"[SCANNER] 保存清单失败 {username}/{market}: {e}", file=sys.stderr)
+        return False
+
+
+def effective_scan_symbols(username: str, market: str) -> list[str]:
+    """该用户该市场的有效扫描清单：用户保存的优先，否则内置默认。"""
+    saved = load_user_scan_symbols(username).get(market)
+    return saved if saved else list(DEFAULT_SYMBOLS_BY_MARKET[market])
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 日期工具
@@ -85,6 +224,19 @@ def _safe_ts(idx, pos: int) -> Optional[pd.Timestamp]:
         return pd.Timestamp(idx[pos]).tz_localize(None)
     except Exception:
         return None
+
+
+def _display_base(symbol: str, market: str) -> str:
+    """标的的人类可读短名：
+    crypto 去掉 USDT 报价后缀；股票去掉交易所后缀（.SS/.SZ/.HK）。"""
+    s = symbol.strip()
+    if market == 'crypto':
+        return s[:-4] if s.upper().endswith('USDT') else s
+    up = s.upper()
+    for suf in ('.SS', '.SZ', '.HK'):
+        if up.endswith(suf):
+            return s[:-len(suf)]
+    return s
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -193,7 +345,10 @@ def scan_symbols(
                     else pd.Timestamp(_dt.date.today() + _dt.timedelta(days=1)))
 
     days_per_bar = _INTERVAL_DAYS.get(interval, 1.0)
-    warmup_days  = int(_WARMUP_BARS * days_per_bar) + 10
+    # 股票只在交易日产生 K 线（节假日/周末无 bar），按自然日往前推会少拉，
+    # 导致 MA99/MACD 在 filter_start 处尚未预热稳定。crypto 24/7 连续不需放大。
+    warmup_factor = 1.0 if market == 'crypto' else 1.6
+    warmup_days  = int(_WARMUP_BARS * days_per_bar * warmup_factor) + 10
     fetch_start  = _to_data_str(_parse_date(start_str) - _dt.timedelta(days=warmup_days))
     fetch_end    = _to_data_str(_parse_date(end_str)) if end_str else None
 
@@ -328,6 +483,15 @@ header a:hover{color:var(--text);}
   cursor:pointer;transition:opacity .15s;}
 .btn-scan:hover{opacity:.85;}
 .btn-scan:disabled{opacity:.4;cursor:not-allowed;}
+.btn-row{display:flex;gap:8px;margin-top:8px;}
+.btn-sm{flex:1;padding:7px 6px;border-radius:6px;border:1px solid var(--border);
+  background:var(--bg);color:var(--dim);font-size:12px;font-weight:600;
+  cursor:pointer;transition:all .15s;}
+.btn-sm:hover{border-color:var(--accent);color:var(--accent2);}
+.btn-sm:disabled{opacity:.4;cursor:not-allowed;}
+.sym-status{font-size:11px;margin-top:6px;line-height:1.5;}
+.sym-status .saved{color:var(--ok);}
+.sym-status .deflt{color:var(--dim);}
 
 /* 右栏 */
 .results-area{flex:1;padding:18px 20px;overflow-y:auto;
@@ -378,6 +542,20 @@ tr.hidden{display:none;}
 <!-- ═══ 左：配置 ═══ -->
 <aside class="panel">
   <h2>扫描参数</h2>
+
+  <div class="field">
+    <label>扫描市场</label>
+    <div class="seg-ctrl">
+      <input type="radio" name="market" id="m-crypto" value="crypto" checked>
+      <label for="m-crypto">🪙 加密</label>
+      <input type="radio" name="market" id="m-us" value="us_stock">
+      <label for="m-us">🇺🇸 美股</label>
+      <input type="radio" name="market" id="m-cn" value="cn_stock">
+      <label for="m-cn">🇨🇳 A股</label>
+      <input type="radio" name="market" id="m-hk" value="hk_stock">
+      <label for="m-hk">🇭🇰 港股</label>
+    </div>
+  </div>
 
   <div class="field">
     <label>扫描方向</label>
@@ -454,10 +632,15 @@ tr.hidden{display:none;}
   </div>
 
   <div class="field">
-    <label>扫描标的（每行一个，留空=内置63币）</label>
+    <label id="sym-label">扫描标的（每行一个）</label>
     <textarea class="sym-textarea" id="symbols-ta"
       placeholder="BTCUSDT&#10;ETHUSDT&#10;HYPEUSDT&#10;..."></textarea>
-    <div class="hint">留空：使用内置 63 个主流代币<br>填写：每行一个 USDT 交易对</div>
+    <div class="btn-row">
+      <button type="button" class="btn-sm" id="btn-save-syms" onclick="saveSymbols()">💾 保存为我的清单</button>
+      <button type="button" class="btn-sm" id="btn-reset-syms" onclick="resetSymbols()">↺ 恢复默认</button>
+    </div>
+    <div class="sym-status" id="sym-status"></div>
+    <div class="hint" id="sym-hint">这是你的个人清单，按市场分别保存，互不影响</div>
   </div>
 
   <button class="btn-scan" id="btn-scan" onclick="startScan()">🔍 开始扫描</button>
@@ -506,6 +689,97 @@ let extCount=0, provCount=0, confCount=0, totalCount=0;
 // symbol → 该代币在 tbody 中第一条 tr（最新信号），用于去重隐藏
 const symLatest = {};
 
+// 各市场的输入提示 / 显示规则。currency 用于结果表「当前价」前缀。
+const MARKET_META = {
+  crypto:   { ph: 'BTCUSDT\nETHUSDT\nHYPEUSDT\n...',        cur: '$' },
+  us_stock: { ph: 'AAPL\nNVDA\nTSLA\n...',                  cur: '$' },
+  cn_stock: { ph: '600519.SS\n300750.SZ\n000858.SZ\n...',   cur: '¥' },
+  hk_stock: { ph: '0700.HK\n9988.HK\n3690.HK\n...',         cur: 'HK$' },
+};
+
+function currentMarket() { return getRadio('market') || 'crypto'; }
+
+let _symBusy = false;
+function setSymStatus(html) { document.getElementById('sym-status').innerHTML = html; }
+
+// 切换市场 / 进入页面：加载该用户在此市场保存的清单（无则内置默认）
+async function loadSymbols(market) {
+  const ta = document.getElementById('symbols-ta');
+  ta.placeholder = (MARKET_META[market] || MARKET_META.crypto).ph;
+  setSymStatus('<span class="deflt">载入中…</span>');
+  try {
+    const r = await fetch('/scanner/symbols?market=' + encodeURIComponent(market));
+    const d = await r.json();
+    const syms = d.symbols || [];
+    ta.value = syms.join('\n');
+    if (d.is_custom)
+      setSymStatus(`<span class="saved">● 已保存为你的清单（${syms.length} 个）</span>`);
+    else
+      setSymStatus(`<span class="deflt">○ 内置默认（${syms.length} 个）· 编辑后点「保存」即成为你的专属清单</span>`);
+  } catch (e) {
+    ta.value = '';
+    setSymStatus('<span class="deflt">载入失败，可手动填写后保存</span>');
+  }
+}
+
+async function saveSymbols() {
+  if (_symBusy) return;  _symBusy = true;
+  const market = currentMarket();
+  const raw = document.getElementById('symbols-ta').value;
+  const btn = document.getElementById('btn-save-syms');
+  const old = btn.textContent; btn.disabled = true; btn.textContent = '保存中…';
+  try {
+    const r = await fetch('/scanner/symbols', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ market, symbols: raw }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      const syms = d.symbols || [];
+      document.getElementById('symbols-ta').value = syms.join('\n');
+      if (d.is_custom)
+        setSymStatus(`<span class="saved">✓ 已保存为你的清单（${syms.length} 个）</span>`);
+      else
+        setSymStatus(`<span class="deflt">○ 清单为空，已回退内置默认（${syms.length} 个）</span>`);
+    } else {
+      setSymStatus('<span class="deflt">保存失败</span>');
+    }
+  } catch (e) {
+    setSymStatus('<span class="deflt">保存失败</span>');
+  } finally {
+    btn.disabled = false; btn.textContent = old; _symBusy = false;
+  }
+}
+
+async function resetSymbols() {
+  if (_symBusy) return;
+  if (!confirm('恢复该市场的内置默认清单？你为此市场保存的自定义清单将被清除。')) return;
+  _symBusy = true;
+  const market = currentMarket();
+  const btn = document.getElementById('btn-reset-syms');
+  const old = btn.textContent; btn.disabled = true; btn.textContent = '恢复中…';
+  try {
+    const r = await fetch('/scanner/symbols', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ market, action: 'reset' }),
+    });
+    const d = await r.json();
+    const syms = d.symbols || [];
+    document.getElementById('symbols-ta').value = syms.join('\n');
+    setSymStatus(`<span class="deflt">○ 已恢复内置默认（${syms.length} 个）</span>`);
+  } catch (e) {
+    setSymStatus('<span class="deflt">操作失败</span>');
+  } finally {
+    btn.disabled = false; btn.textContent = old; _symBusy = false;
+  }
+}
+
+document.querySelectorAll('[name="market"]').forEach(el =>
+  el.addEventListener('change', () => loadSymbols(currentMarket())));
+
+// 首次进入页面：加载当前市场的清单
+loadSymbols(currentMarket());
+
 document.getElementById('dedup-toggle').addEventListener('change', applyDedup);
 
 function applyDedup() {
@@ -546,6 +820,7 @@ function startScan() {
   if (!do3s && !doExt) { alert('请至少选择一种信号类型'); return; }
 
   const kind     = getRadio('kind');
+  const market   = getRadio('market');
   const interval = getRadio('interval');
   const startStr = document.getElementById('start-str').value.trim();
   const endStr   = document.getElementById('end-str').value.trim();
@@ -567,12 +842,12 @@ function startScan() {
   Object.keys(symLatest).forEach(k => delete symLatest[k]);
 
   const params = new URLSearchParams({
-    kind, interval, start: startStr, end: endStr,
+    kind, market, interval, start: startStr, end: endStr,
     max_level: maxLevel, ratio_thr: ratioThr, symbols: symRaw,
     do_three_seg: do3s?'1':'0', do_extreme: doExt?'1':'0',
   });
   // 将当前扫描参数存到全局，供 appendRow 构建图表链接
-  window._scanParams = { interval, startStr, endStr };
+  window._scanParams = { market, interval, startStr, endStr };
 
   es = new EventSource('/scanner/stream?' + params.toString());
   es.onmessage = function(e) {
@@ -616,18 +891,26 @@ function updateStats() {
   document.getElementById('stats-row').style.display = 'flex';
 }
 
+function displayBase(sym, market) {
+  if (market === 'crypto')
+    return sym.toUpperCase().endsWith('USDT') ? sym.slice(0,-4) : sym;
+  return sym.replace(/\.(SS|SZ|HK)$/i, '');
+}
+
 function appendRow(h) {
   document.getElementById('table-wrap').style.display = 'block';
   const sym  = h.symbol;
-  const base = sym.endsWith('USDT') ? sym.slice(0,-4) : sym;
-  const icon = h.kind==='bullish' ? '📈' : '📉';
   const p    = window._scanParams || {};
+  const mkt  = p.market || 'crypto';
+  const base = displayBase(sym, mkt);
+  const icon = h.kind==='bullish' ? '📈' : '📉';
 
   // ── 图表链接：直接渲染 K 线图 ──────────────────────────────────────────
   // start 用 s1_date（结构起点），让图表完整展示背离结构
   // end 用 endStr（扫描结束），展示后续走势
   const chartUrl = '/scanner/chart?' + new URLSearchParams({
     symbol:   sym,
+    market:   mkt,
     interval: p.interval || '3day',
     start:    h.s1_date || p.startStr || '',
     end:      p.endStr  || '',
@@ -660,8 +943,9 @@ function appendRow(h) {
       <span>${(h.ratio*100).toFixed(1)}%</span></div>`;
   }
 
+  const cur = (MARKET_META[mkt] || MARKET_META.crypto).cur;
   const price = h.current_price
-    ? '$'+h.current_price.toLocaleString(undefined,
+    ? cur+h.current_price.toLocaleString(undefined,
         {minimumFractionDigits:2,maximumFractionDigits:4})
     : '-';
 
@@ -701,7 +985,7 @@ def register_scanner_routes(app):
     """在 app.py 末尾调用：register_scanner_routes(app)"""
     import base64
     import time as _time
-    from flask import (request, session, redirect, url_for,
+    from flask import (request, session, redirect, url_for, jsonify,
                        Response, stream_with_context, render_template_string)
 
     @app.route('/scanner')
@@ -709,6 +993,47 @@ def register_scanner_routes(app):
         if 'username' not in session:
             return redirect(url_for('login'))
         return SCANNER_HTML.replace('__DEFAULT_START__', SCANNER_DEFAULT_START)
+
+    # ── /scanner/symbols：读取 / 保存当前用户的扫描清单 ──────────────────
+    @app.route('/scanner/symbols', methods=['GET'])
+    def scanner_symbols_get():
+        if 'username' not in session:
+            return jsonify({'error': 'unauthorized'}), 401
+        market = request.args.get('market', 'crypto')
+        if market not in VALID_MARKETS:
+            market = 'crypto'
+        saved = load_user_scan_symbols(session['username']).get(market)
+        return jsonify({
+            'market':        market,
+            'symbols':       saved if saved else list(DEFAULT_SYMBOLS_BY_MARKET[market]),
+            'is_custom':     bool(saved),
+            'default_count': len(DEFAULT_SYMBOLS_BY_MARKET[market]),
+        })
+
+    @app.route('/scanner/symbols', methods=['POST'])
+    def scanner_symbols_post():
+        if 'username' not in session:
+            return jsonify({'ok': False, 'error': 'unauthorized'}), 401
+        body   = request.get_json(silent=True) or {}
+        market = body.get('market', 'crypto')
+        action = body.get('action', 'save')
+        if market not in VALID_MARKETS:
+            return jsonify({'ok': False, 'error': 'bad market'}), 400
+
+        if action == 'reset':
+            # 删除该市场的自定义覆盖，恢复内置默认
+            save_user_scan_symbols(session['username'], market, [])
+        else:
+            save_user_scan_symbols(session['username'], market,
+                                   body.get('symbols', ''))
+
+        saved = load_user_scan_symbols(session['username']).get(market)
+        return jsonify({
+            'ok':        True,
+            'market':    market,
+            'symbols':   saved if saved else list(DEFAULT_SYMBOLS_BY_MARKET[market]),
+            'is_custom': bool(saved),
+        })
 
     # ── /scanner/chart：直接渲染 K 线图 ──────────────────────────────────
     @app.route('/scanner/chart')
@@ -722,9 +1047,12 @@ def register_scanner_routes(app):
         from plot_kline import render_chart
 
         symbol   = request.args.get('symbol',   'BTCUSDT')
+        market   = request.args.get('market',   'crypto')
         interval = request.args.get('interval', '3day')
         start    = request.args.get('start',    '').strip()
         end      = request.args.get('end',      '').strip() or None
+        if market not in VALID_MARKETS:
+            market = 'crypto'
 
         # start 格式：'YYYY-MM-DD' → 转为 data 层接受的格式
         def _fmt(s):
@@ -739,12 +1067,12 @@ def register_scanner_routes(app):
         start_str = _fmt(start)
         end_str   = _fmt(end)
 
-        base = symbol[:-4] if symbol.upper().endswith('USDT') else symbol
+        base = _display_base(symbol, market)
         title = f"{base} {interval} K线图"
 
         try:
             fig, df, divs = render_chart(
-                'crypto', symbol, interval,
+                market, symbol, interval,
                 start_str, end_str,
             )
             buf = io.BytesIO()
@@ -767,6 +1095,7 @@ def register_scanner_routes(app):
                             mimetype='text/event-stream')
 
         kind      = request.args.get('kind',        'bullish')
+        market    = request.args.get('market',      'crypto')
         interval  = request.args.get('interval',    '3day')
         start_str = request.args.get('start', SCANNER_DEFAULT_START)
         end_str   = request.args.get('end',         '') or None
@@ -776,14 +1105,21 @@ def register_scanner_routes(app):
         do_3s     = request.args.get('do_three_seg','1') == '1'
         do_ext    = request.args.get('do_extreme',  '1') == '1'
 
+        if market not in VALID_MARKETS:
+            market = 'crypto'
+
         signal_types = set()
         if do_3s:  signal_types.add('three_seg')
         if do_ext: signal_types.add('extreme')
         if not signal_types:
             signal_types = {'three_seg', 'extreme'}
 
-        symbols = ([s.strip().upper() for s in sym_raw.splitlines() if s.strip()]
-                   if sym_raw else DEFAULT_CRYPTO_SYMBOLS)
+        # textarea 留空 → 用该用户保存的清单；没有再退回内置默认
+        symbols = (_clean_symbol_list(sym_raw)
+                   if sym_raw else effective_scan_symbols(session['username'], market))
+
+        # 股票数据源（yfinance / akshare）并发过高易被限流，降并发更稳。
+        max_workers = 6 if market == 'crypto' else 4
 
         hit_q   = queue.Queue()
         prog_q  = queue.Queue()
@@ -799,7 +1135,7 @@ def register_scanner_routes(app):
                 scan_symbols(
                     symbols=symbols, interval=interval,
                     start_str=start_str, end_str=end_str,
-                    market='crypto', max_workers=6,
+                    market=market, max_workers=max_workers,
                     min_bars=2, ratio_threshold=ratio_thr,
                     max_level=max_level, kind_filter=kind,
                     signal_types=signal_types, progress_cb=_cb,
