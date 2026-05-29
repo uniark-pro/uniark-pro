@@ -68,6 +68,7 @@ matplotlib.rcParams['axes.unicode_minus'] = False
 from data import get_klines
 from indicator import add_indicators
 from divergence import find_three_segment_divergences, find_missed_extremes
+from structure_v2 import find_pivots, find_swings
 from plot_helpers import annotate_divergences, print_divergences
 from navigation import INTERVAL_MINUTES, compute_lookback_factor
 from config import (
@@ -511,6 +512,117 @@ def render_chart(market, symbol, interval, start_str=None, end_str=None,
         except Exception:
             # 解析失败 / 序列空 / 任何异常都静默
             pass
+
+    # ── 走势段连线 + 转折点编号 ───────────────────────────────────────────
+    try:
+        swings = find_swings(df['hist'], df['low'], df['high'])
+        pivots = find_pivots(df['hist'], df['low'], df['high'])
+        price_ax = axes[0]
+        for sn, swing in enumerate(swings):
+            x0, y0 = swing.start_pivot.bar_idx, swing.start_pivot.price
+            x1, y1 = swing.end_pivot.bar_idx,   swing.end_pivot.price
+            color = '#00cc88' if swing.direction == 'up' else '#ff4455'
+            price_ax.plot([x0, x1], [y0, y1],
+                          color=color, linewidth=1.2, alpha=0.75, zorder=9)
+            # S0, S1, S2... 标注在连线中点
+            mx, my = (x0 + x1) / 2, (y0 + y1) / 2
+            price_ax.text(mx, my, f'S{sn}',
+                          color=color, fontsize=7, fontweight='bold',
+                          ha='center', va='center', zorder=11,
+                          bbox=dict(boxstyle='round,pad=0.15', facecolor='#1e1e2e',
+                                    edgecolor=color, linewidth=0.6, alpha=0.8))
+        # ── 盘整区间辅助函数 ─────────────────────────────────────────────────
+        import matplotlib.patches as _patches
+        def swing_high(sw):
+            return max(sw.start_pivot.price, sw.end_pivot.price)
+        def swing_low(sw):
+            return min(sw.start_pivot.price, sw.end_pivot.price)
+        def draw_consolidation(ax, sw_a, sw_b, sw_c, x_end, label, color):
+            hi = min(swing_high(sw_a), swing_high(sw_b), swing_high(sw_c))
+            lo = max(swing_low(sw_a),  swing_low(sw_b),  swing_low(sw_c))
+            if hi <= lo:
+                return
+            x0 = sw_a.start_pivot.bar_idx
+            rect = _patches.Rectangle(
+                (x0, lo), x_end - x0, hi - lo,
+                linewidth=1.2, edgecolor=color,
+                facecolor=color + '15', zorder=8,
+            )
+            ax.add_patch(rect)
+            # 标签在方框右侧中间：P名 在上，价格区间 在下
+            mid_y = (hi + lo) / 2
+            ax.text(x_end + 0.8, mid_y + (hi - lo) * 0.12, label,
+                    color=color, fontsize=8, fontweight='bold',
+                    ha='left', va='center', zorder=12)
+            ax.text(x_end + 0.8, mid_y - (hi - lo) * 0.12,
+                    f'{lo:,.0f}-{hi:,.0f}',
+                    color=color, fontsize=7,
+                    ha='left', va='center', zorder=12)
+
+        # ── 通用盘整区间扫描：P1, P2, P3... ────────────────────────────────
+        # 颜色轮换
+        CON_COLORS = ['#ffaa00', '#aa88ff', '#00ccff', '#ff88aa', '#88ffaa']
+        con_num = 0          # 当前盘整编号（0-based，显示时+1）
+        prev_hi = None       # 上一个盘整区间上界
+        prev_lo = None       # 上一个盘整区间下界
+        scan_from = 1        # 从哪个段开始扫描
+
+        while scan_from <= len(swings) - 3:
+            # 1. 从 scan_from 开始滑动找第一个有重叠区间的三段
+            found_i = None
+            for i in range(scan_from, len(swings) - 2):
+                hi = min(swing_high(swings[i]), swing_high(swings[i+1]), swing_high(swings[i+2]))
+                lo = max(swing_low(swings[i]),  swing_low(swings[i+1]),  swing_low(swings[i+2]))
+                if hi > lo:
+                    # 2. 检查与上一个盘整区间无交集
+                    if prev_hi is None or lo > prev_hi or hi < prev_lo:
+                        found_i = i
+                        break
+
+            if found_i is None:
+                break
+
+            i = found_i
+            hi = min(swing_high(swings[i]), swing_high(swings[i+1]), swing_high(swings[i+2]))
+            lo = max(swing_low(swings[i]),  swing_low(swings[i+1]),  swing_low(swings[i+2]))
+
+            # 3. 向右延伸：后续段价格回到当前盘整区间内则延伸
+            # 不用 break：遇到离开区间的段继续往右找，直到找不到回来的段为止
+            x_end = swings[i+2].end_pivot.bar_idx
+            last_in_j = i + 2
+            for j in range(i+3, len(swings)):
+                sh = swing_high(swings[j])
+                sl = swing_low(swings[j])
+                if sl < hi and sh > lo:   # 回到区间内，延伸
+                    x_end = swings[j].end_pivot.bar_idx
+                    last_in_j = j
+
+            # 4. 画出方框
+            label = 'P' + str(con_num + 1)
+            color = CON_COLORS[con_num % len(CON_COLORS)]
+            draw_consolidation(price_ax,
+                               swings[i], swings[i+1], swings[i+2],
+                               x_end=x_end, label=label, color=color)
+
+            # 5. 更新状态，从离开该盘整的下一段继续扫描
+            prev_hi = hi
+            prev_lo = lo
+            con_num += 1
+            scan_from = last_in_j + 1
+
+        for num, p in enumerate(pivots, start=1):
+            color = '#00cc88' if p.kind == 'low' else '#ff4455'
+            price_ax.scatter(p.bar_idx, p.price,
+                             color=color, s=40, zorder=10,
+                             marker='o', edgecolors='white', linewidths=0.5)
+            # 数字偏移：低点往下 3%，高点往上 3%，与圆点保持距离
+            y_offset = -p.price * 0.03 if p.kind == 'low' else p.price * 0.03
+            price_ax.text(p.bar_idx, p.price + y_offset, str(num),
+                          color=color, fontsize=8, fontweight='bold',
+                          ha='center', va='top' if p.kind == 'low' else 'bottom',
+                          zorder=11)
+    except Exception:
+        pass
 
     return fig, df, divergences
 
