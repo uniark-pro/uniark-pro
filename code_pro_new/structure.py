@@ -266,24 +266,99 @@ def find_first_consolidation(pivots: list[Pivot]):
     return None
 
 
-def find_all_consolidations(pivots: list[Pivot]) -> list[tuple]:
-    """
-    滑动扫描所有存在重叠区间的三段结构。
+def _seg_intersects_p(p_start: Pivot, p_end: Pivot,
+                      p_lo: float, p_hi: float) -> bool:
+    """判断一段走势是否与盘整区间 [p_lo, p_hi] 有价格交集"""
+    sh = seg_high(p_start, p_end)
+    sl = seg_low(p_start, p_end)
+    return sh > p_lo and sl < p_hi
 
-    盘整区间由前三段确定（固定锚点），后续走势延伸不改变区间。
-    返回 list[(i, hi, lo)]：
-        i  : S1 起始转折点下标
-        hi : 重叠区间上界
-        lo : 重叠区间下界
+
+def _leaves_p(p_start: Pivot, p_end: Pivot,
+               p_lo: float, p_hi: float) -> bool:
+    """
+    判断一段走势是否"从 P 区间内离开"：
+    - 起点价格在区间内（含边界）
+    - 终点价格超出区间（> hi 或 < lo）
+    """
+    start_in = p_lo <= p_start.price <= p_hi
+    end_out  = p_end.price > p_hi or p_end.price < p_lo
+    return start_in and end_out
+
+
+def find_consolidations(pivots: list[Pivot]) -> list[dict]:
+    """
+    识别盘整序列 P1, P2, P3...
+
+    算法：
+    1. 从 index=1 开始滑动找第一个有重叠区间的三段 → P1
+       盘整区间 [lo, hi] 固定为前三段的重叠区间（固定锚点）
+    2. 从第四段开始逐段扫描 S(k)：
+       - S(k) 与 P1 有价格交集 → P1 扩展到 S(k)，继续
+       - S(k) 与 P1 无交集：
+         检查 S(k)+S(k+1)+S(k+2) 是否构成新三段（有重叠区间且与P1无交集）
+         成立 → P1 被破坏，P2 从 S(k) 开始
+         不成立 → 继续扫描
+    3. 对 P2 重复，识别 P3...
     """
     n = len(pivots)
     results = []
-    for i in range(n - 3):
-        p0, p1, p2, p3 = pivots[i], pivots[i+1], pivots[i+2], pivots[i+3]
-        hi = min(seg_high(p0, p1), seg_high(p1, p2), seg_high(p2, p3))
-        lo = max(seg_low(p0, p1),  seg_low(p1, p2),  seg_low(p2, p3))
-        if hi > lo:
-            results.append((i, hi, lo))
+
+    scan_from = 1
+    while scan_from <= n - 4:
+        # 找第一个有重叠区间的三段作为 Pi 锚点
+        found = None
+        for i in range(scan_from, n - 3):
+            p0,p1,p2,p3 = pivots[i],pivots[i+1],pivots[i+2],pivots[i+3]
+            hi = min(seg_high(p0,p1), seg_high(p1,p2), seg_high(p2,p3))
+            lo = max(seg_low(p0,p1),  seg_low(p1,p2),  seg_low(p2,p3))
+            if hi > lo:
+                found = (i, hi, lo)
+                break
+        if found is None:
+            break
+
+        pi_idx, p_hi, p_lo = found
+        extend_end_idx = pi_idx + 3   # 至少扩展到第三段终点
+        next_p_start = None
+
+        # 从第四段起点开始逐段扫描
+        k = pi_idx + 3
+        while k < n - 1:
+            sk_s = pivots[k]
+            sk_e = pivots[k + 1]
+            sh = seg_high(sk_s, sk_e)
+            sl = seg_low(sk_s, sk_e)
+
+            if sh > p_lo and sl < p_hi:
+                # S(k) 与 P1 有价格交集 → P1 扩展
+                extend_end_idx = k + 1
+                k += 1
+            else:
+                # S(k) 与 P1 无交集
+                # 检查 S(k)+S(k+1)+S(k+2) 是否构成有效新三段
+                if k + 2 < n:
+                    q0,q1,q2,q3 = pivots[k],pivots[k+1],pivots[k+2],pivots[k+3] if k+3 < n else pivots[k+2]
+                    new_hi = min(seg_high(q0,q1), seg_high(q1,q2), seg_high(q2,q3))
+                    new_lo = max(seg_low(q0,q1),  seg_low(q1,q2),  seg_low(q2,q3))
+                    if new_hi > new_lo and (new_lo >= p_hi or new_hi <= p_lo):
+                        # 新三段与 P1 无交集 → P1 被破坏，P2 从 S(k) 开始
+                        next_p_start = k
+                        break
+                k += 1
+
+        results.append({
+            'start_idx':  pi_idx,
+            'hi':         p_hi,
+            'lo':         p_lo,
+            'extend_idx': extend_end_idx,
+        })
+
+        if next_p_start is not None:
+            scan_from = next_p_start
+        else:
+            break
+
     return results
 
 
@@ -315,35 +390,46 @@ def annotate_pivots(price_ax, df: pd.DataFrame, pivots: list[Pivot]) -> None:
                          color='#ff4455', s=40, zorder=10,
                          marker='o', edgecolors='white', linewidths=0.5)
 
-    # 盘整区间：画出所有存在重叠区间的三段结构
+    # 盘整区间：P1, P2, P3...
     import matplotlib.patches as _patches
     CON_COLORS = ['#ffaa00', '#aa88ff', '#00ccff', '#ff88aa', '#88ffaa']
-    all_cons = find_all_consolidations(pivots)
-    for n_con, (ci, hi, lo) in enumerate(all_cons):
+    cons = find_consolidations(pivots)
+    for n_con, con in enumerate(cons):
         color = CON_COLORS[n_con % len(CON_COLORS)]
-        x0 = pivots[ci].bar_idx
-        x1 = pivots[ci + 3].bar_idx
+        x0 = pivots[con['start_idx']].bar_idx
+        x1 = pivots[con['extend_idx']].bar_idx
+        hi = con['hi']
+        lo = con['lo']
         rect = _patches.Rectangle(
             (x0, lo), x1 - x0, hi - lo,
-            linewidth=1.0, edgecolor=color,
-            facecolor=color + '12', zorder=8,
+            linewidth=1.2, edgecolor=color,
+            facecolor=color + '15', zorder=8,
         )
         price_ax.add_patch(rect)
         price_ax.text(x1 + 0.5, (hi + lo) / 2,
                       'P' + str(n_con + 1) + '\n' + f'{lo:,.0f}-{hi:,.0f}',
-                      color=color, fontsize=6, fontweight='bold',
+                      color=color, fontsize=7, fontweight='bold',
                       ha='left', va='center', zorder=12)
 
-    # 走势段连线：相邻转折点之间低调连线
+    # 走势段连线 + S0,S1,S2... 标注
     import matplotlib.collections as _mc
     up_segs, dn_segs = [], []
     for i in range(len(pivots) - 1):
         p0, p1 = pivots[i], pivots[i + 1]
         seg = [(p0.bar_idx, p0.price), (p1.bar_idx, p1.price)]
+        color = '#00cc88' if p0.kind == 'low' else '#ff4455'
         if p0.kind == 'low':
             up_segs.append(seg)
         else:
             dn_segs.append(seg)
+        # 标注在连线中点
+        mx = (p0.bar_idx + p1.bar_idx) / 2
+        my = (p0.price + p1.price) / 2
+        price_ax.text(mx, my, f'S{i}',
+                      color=color, fontsize=6, fontweight='bold',
+                      ha='center', va='center', zorder=11,
+                      bbox=dict(boxstyle='round,pad=0.1', facecolor='white',
+                                edgecolor=color, linewidth=0.5, alpha=0.7))
     if up_segs:
         price_ax.add_collection(_mc.LineCollection(
             up_segs, colors='#00cc88', linewidths=0.8, alpha=0.5, zorder=8))

@@ -1,0 +1,21 @@
+nohup: 忽略输入
+启动服务: http://0.0.0.0:5000
+手机访问: http://<本机IP>:5000
+提示: 首次使用请先运行 python3 manage_users.py add <用户名> <密码>
+ * Serving Flask app 'app'
+ * Debug mode: off
+WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.188.192:5000
+Press CTRL+C to quit
+192.168.188.94 - - [30/May/2026 22:23:36] "GET / HTTP/1.1" 200 -
+192.168.188.94 - - [30/May/2026 22:23:37] "GET /favicon.ico HTTP/1.1" 404 -
+[ROUTE] crypto/BTCUSDT weekly: binance 返回 459 行
+192.168.188.94 - - [30/May/2026 22:23:47] "POST /generate HTTP/1.1" 200 -
+[ROUTE] crypto/BTCUSDT weekly: binance 返回 146 行
+192.168.188.94 - - [30/May/2026 22:29:03] "POST /generate HTTP/1.1" 200 -
+[ROUTE] crypto/BTCUSDT weekly: binance 返回 303 行
+192.168.188.94 - - [30/May/2026 22:29:22] "POST /generate HTTP/1.1" 200 -
+[ROUTE] crypto/BTCUSDT weekly: binance 返回 359 行
+192.168.188.94 - - [30/May/2026 22:29:39] "POST /generate HTTP/1.1" 200 -
