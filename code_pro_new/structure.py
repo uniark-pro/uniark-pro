@@ -105,12 +105,63 @@ def _raw_pivots(segs: list[dict],
 # 第二步：在转折点层面合并短走势段
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _pivot_cluster_extra(pivot_bar: int,
+                         direction: int,
+                         low_vals: np.ndarray,
+                         high_vals: np.ndarray) -> int:
+    """
+    计算转折点所在盘整簇向"段外方向"伸出的额外K线数。
+
+    盘整结构判定：以转折点那根K线为 S2，前一根 S1、后一根 S3，
+    三根存在重叠区间（max(lows) < min(highs)）则盘整成立。
+    重叠区间确定后，向 direction 方向逐根检查：只要该K线 [low, high]
+    与重叠区间有交集就并入盘整簇，计入额外K线数。
+
+    参数
+    ----
+    pivot_bar : 转折点的K线下标
+    direction : +1 向右扫描，-1 向左扫描
+    返回向 direction 方向伸出走势段之外的额外K线数（不含转折点本身）。
+    若该转折点不构成盘整结构，返回 0。
+    """
+    n = len(low_vals)
+    i = pivot_bar
+    if i - 1 < 0 or i + 1 >= n:
+        return 0
+    hi = min(high_vals[i - 1], high_vals[i], high_vals[i + 1])
+    lo = max(low_vals[i - 1],  low_vals[i],  low_vals[i + 1])
+    if hi <= lo:
+        return 0
+    extra = 0
+    j = pivot_bar + direction
+    while 0 <= j < n:
+        if high_vals[j] > lo and low_vals[j] < hi:
+            extra += 1
+            j += direction
+        else:
+            break
+    return extra
+
+
+def _swing_bars(p_start: Pivot, p_end: Pivot,
+                low_vals: np.ndarray,
+                high_vals: np.ndarray) -> int:
+    """
+    一段走势 p_start→p_end 的K线根数。
+    = 下标差(含两端) + 起点端盘整簇向左伸出 + 终点端盘整簇向右伸出
+    """
+    base = p_end.bar_idx - p_start.bar_idx + 1
+    left_extra  = _pivot_cluster_extra(p_start.bar_idx, -1, low_vals, high_vals)
+    right_extra = _pivot_cluster_extra(p_end.bar_idx,   +1, low_vals, high_vals)
+    return base + left_extra + right_extra
+
+
 def _merge_short_swings(pivots: list[Pivot],
                         low_vals: np.ndarray,
                         high_vals: np.ndarray,
                         min_bars: int) -> list[Pivot]:
     """
-    走势段K线根数 = pivots[i+1].bar_idx - pivots[i].bar_idx + 1（含两端）。
+    走势段K线根数由 _swing_bars 计算（含两端转折点的盘整簇）。
     不足 min_bars 的段视为 S2，将 S1+S2+S3 合并：
     - S1 和 S3 同向（kind 相同），S2 反向
     - 合并后保留 S1 的起点，S3 的终点
@@ -132,8 +183,8 @@ def _merge_short_swings(pivots: list[Pivot],
             if (i > 0                        # 有左侧段 S1
                     and i < len(result) - 1  # 有右侧段 S3
                     and len(new) > 0):
-                # 当前走势段：new[-1] → p，根数
-                s2_bars = p.bar_idx - new[-1].bar_idx + 1
+                # 当前走势段：new[-1] → p，根数（含盘整簇）
+                s2_bars = _swing_bars(new[-1], p, low_vals, high_vals)
                 if s2_bars < min_bars:
                     s1_pivot = new[-1]          # S1 的起点转折点
                     s3_pivot = result[i + 1]    # S3 的终点转折点
@@ -142,7 +193,13 @@ def _merge_short_swings(pivots: list[Pivot],
                         # 合并：在 S1起点 到 S3终点 的范围内重新取极值
                         ms = s1_pivot.bar_idx
                         me = s3_pivot.bar_idx
-                        if s1_pivot.kind == 'high':
+                        # 若 S1 起点是第0根（数据起点），强制保留为转折点1，
+                        # 不重新取极值（起点无条件是转折点1）
+                        if ms == 0:
+                            new[-1] = Pivot(bar_idx=0,
+                                            price=s1_pivot.price,
+                                            kind=s1_pivot.kind)
+                        elif s1_pivot.kind == 'high':
                             local = int(np.nanargmax(high_vals[ms: me + 1]))
                             bi = ms + local
                             new[-1] = Pivot(bar_idx=bi,
@@ -160,6 +217,30 @@ def _merge_short_swings(pivots: list[Pivot],
             new.append(p)
             i += 1
         result = new
+
+    # 归并相邻同向段：合并后可能出现相邻 kind 相同的转折点（中间反向段被合并掉），
+    # 需要去掉多余的转折点。两个相邻同向 high：保留价格更高的；同向 low：保留更低的。
+    # 起点（bar_idx==0）无条件保留位置和价格。
+    changed = True
+    while changed:
+        changed = False
+        merged = []
+        for p in result:
+            if merged and merged[-1].kind == p.kind:
+                prev = merged[-1]
+                if prev.bar_idx == 0:
+                    # 起点无条件保留，丢弃后面的同向点
+                    changed = True
+                    continue
+                # 取价格更极端的那个
+                if p.kind == 'high':
+                    merged[-1] = p if p.price >= prev.price else prev
+                else:
+                    merged[-1] = p if p.price <= prev.price else prev
+                changed = True
+            else:
+                merged.append(p)
+        result = merged
 
     return result
 
@@ -191,10 +272,9 @@ def find_pivots(hist_series: pd.Series,
     pivots = _raw_pivots(segs, low_vals, high_vals)
 
     # 第二步：转折点层面合并短走势段
-    # 起点固定不参与合并。
+    # 起点已完成，参与合并（合并时保留最左段起点，起点不会丢失）。
     # 末点：若最后一段 hist 的 end 等于数据末尾下标，说明未翻号（走势未完成），
     # 末点不参与合并；否则末点参与合并（已完成的走势段可以被合并）。
-    first_pivot = pivots[0]
     last_pivot  = pivots[-1]
     last_seg_end = segs[-1]['end']
     last_data_idx = len(low_vals) - 1
@@ -202,12 +282,11 @@ def find_pivots(hist_series: pd.Series,
 
     if last_seg_unfinished:
         # 末端未完成：末点不参与合并
-        middle = _merge_short_swings(pivots[1:-1], low_vals, high_vals, min_bars)
-        pivots = [first_pivot] + middle + [last_pivot]
+        head = _merge_short_swings(pivots[:-1], low_vals, high_vals, min_bars)
+        pivots = head + [last_pivot]
     else:
-        # 末端已完成：末点参与合并
-        merged = _merge_short_swings(pivots[1:], low_vals, high_vals, min_bars)
-        pivots = [first_pivot] + merged
+        # 末端已完成：全部参与合并
+        pivots = _merge_short_swings(pivots, low_vals, high_vals, min_bars)
 
     # 第三步：修正时间顺序（单次线性扫描）
     for i in range(1, len(pivots) - 1):

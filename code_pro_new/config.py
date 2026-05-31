@@ -137,4 +137,4 @@ SCANNER_DEFAULT_START: str = '2026-04'
 
 # 走势段最小K线根数（转折点到转折点，含两端）。
 # 不足此根数的走势段视为噪声，做 S1+S2+S3 合并。
-STRUCTURE_MIN_SWING_BARS: int = 5
+STRUCTURE_MIN_SWING_BARS: int = 7
