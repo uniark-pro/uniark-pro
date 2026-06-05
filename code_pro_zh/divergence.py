@@ -3,8 +3,8 @@
 ====================================================
 
 这是整个交易体系骨架中"三段结构 / 同向段力度比较 / 背离判定"的
-唯一实现。所有上层应用（plot_single.py / plot_3day.py / app.py / main.py
-及未来扩展）都应当 import 本模块。
+唯一实现。所有上层应用（plot_kline.py / app.py / main.py 等）
+都通过本模块的 find_three_segment_divergences + find_missed_extremes 入口。
 
 公理化要点
 ----------
