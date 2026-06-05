@@ -631,7 +631,7 @@ def find_missed_extremes(hist_series, low_series, high_series):
     且在它们后面的 2018-12 才出现真正的 L2 趋势底背离。
 
     约束：S1 段（prev）和 S2 段（seg）的原始 K 线根数都必须
-    ≥ MISSED_EXTREME_MIN_BARS（默认 4 根），任一过短则跳过该对。
+    ≥ MISSED_EXTREME_MIN_BARS（默认 5 根），任一过短则跳过该对。
     阈值含义和调整方式见模块顶部 MISSED_EXTREME_MIN_BARS 的定义注释。
 
     返回 list[dict]，与 find_three_segment_divergences 同构，level 恒为 0。
