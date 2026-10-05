@@ -60,26 +60,45 @@
 ### 单用户版（`code_pro_zh`）
 
 ```bash
-mkdir uniark-pro && cd uniark-pro
+cd ~
+mkdir -p uniark-pro
+cd uniark-pro
+
+# 下载源代码
 curl -L https://github.com/uniark-pro/uniark-pro/tarball/main | tar -xz
 mv */code_pro_zh/* .
 rm -rf uniark-pro-uniark-pro-*
 curl -LO https://raw.githubusercontent.com/uniark-pro/uniark-pro/main/requirements.txt
 
-python3 -m venv venv && source venv/bin/activate
+# 创建虚拟环境
+python3 -m venv venv
+
+# 激活虚拟环境
+source venv/bin/activate
+
+# 安装依赖
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
 ### 多用户版（`code_pro_multiuser`）
 
 ```bash
-mkdir uniark-pro-multiuser && cd uniark-pro-multiuser
+cd ~
+mkdir -p uniark-pro-multiuser
+cd uniark-pro-multiuser
+
+# 下载源代码
 curl -L https://github.com/uniark-pro/uniark-pro/tarball/main | tar -xz
 mv */code_pro_multiuser/* .
 rm -rf uniark-pro-uniark-pro-*
 curl -LO https://raw.githubusercontent.com/uniark-pro/uniark-pro/main/requirements.txt
 
+# 创建虚拟环境 && 激活虚拟环境
 python3 -m venv venv && source venv/bin/activate
+
+# 安装依赖
+pip install --upgrade pip
 pip install -r requirements.txt
 
 # 创建用户（至少创建一个才能登录）
